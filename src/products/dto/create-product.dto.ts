@@ -75,6 +75,10 @@ export class CreateProductDto {
 
   @IsBoolean()
   @IsOptional()
+  isFeatured?: boolean;
+
+  @IsBoolean()
+  @IsOptional()
   isNewArrival?: boolean;
 
   @IsBoolean()

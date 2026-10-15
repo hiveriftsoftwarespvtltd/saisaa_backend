@@ -19,6 +19,34 @@ export class ProductsService implements OnModuleInit {
 
   async onModuleInit() {
     await this.seedDefaultProducts();
+    await this.ensureFeaturedAndBestSellerDefaults();
+  }
+
+  async ensureFeaturedAndBestSellerDefaults() {
+    try {
+      const totalCount = await this.productModel.countDocuments();
+      if (totalCount === 0) return;
+
+      const featuredCount = await this.productModel.countDocuments({ isFeatured: true });
+      if (featuredCount === 0) {
+        const toFeature = await this.productModel.find().limit(6).exec();
+        for (const p of toFeature) {
+          p.isFeatured = true;
+          await p.save();
+        }
+      }
+
+      const bestSellerCount = await this.productModel.countDocuments({ isBestSeller: true });
+      if (bestSellerCount === 0) {
+        const toBestSell = await this.productModel.find().skip(1).limit(4).exec();
+        for (const p of toBestSell) {
+          p.isBestSeller = true;
+          await p.save();
+        }
+      }
+    } catch (e) {
+      // Non-blocking initialization
+    }
   }
 
   async seedDefaultProducts() {
@@ -37,6 +65,7 @@ export class ProductsService implements OnModuleInit {
           rating: 4.9,
           reviewCount: 38,
           isBestSeller: true,
+          isFeatured: true,
           isNewArrival: false,
           inStock: true,
           comingSoon: false,
@@ -381,6 +410,10 @@ export class ProductsService implements OnModuleInit {
 
     if (query.isBestSeller === 'true' || query.isBestSeller === true) {
       filter.isBestSeller = true;
+    }
+
+    if (query.isFeatured === 'true' || query.isFeatured === true) {
+      filter.isFeatured = true;
     }
 
     if (query.isNewArrival === 'true' || query.isNewArrival === true) {

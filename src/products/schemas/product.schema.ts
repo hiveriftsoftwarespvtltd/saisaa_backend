@@ -61,6 +61,9 @@ export class Product extends BaseDocument {
   isBestSeller: boolean;
 
   @Prop({ default: false, index: true })
+  isFeatured: boolean;
+
+  @Prop({ default: false, index: true })
   isNewArrival: boolean;
 
   @Prop({ default: true })
