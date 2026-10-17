@@ -15,6 +15,7 @@ import { CustomersModule } from './customers/customers.module';
 import { CouponsModule } from './coupons/coupons.module';
 import { ReviewsModule } from './reviews/reviews.module';
 import { InventoryModule } from './inventory/inventory.module';
+import { InquiriesModule } from './inquiries/inquiries.module';
 
 @Module({
   imports: [
@@ -63,6 +64,9 @@ import { InventoryModule } from './inventory/inventory.module';
 
     // Inventory module (Stock control, warehouse levels & reorder thresholds)
     InventoryModule,
+
+    // Inquiries module (Contact concierge & bespoke bridal consultations)
+    InquiriesModule,
   ],
   controllers: [AppController],
   providers: [AppService],

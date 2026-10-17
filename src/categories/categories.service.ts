@@ -26,33 +26,35 @@ export class CategoriesService implements OnModuleInit {
     if (count === 0) {
       const defaults = [
         {
-          name: 'Suits',
-          slug: 'suits',
+          name: 'Stitched Suits',
+          slug: 'stitched-suits',
           description:
-            'Artisanal Anarkali, straight cut, chanderi, and festive unstitched three-piece suit sets with dupatta.',
+            'Artisanal stitched suit sets, kurtis, coordinate sets and ceremonial attire.',
           image: '/images/02_category_suits.jpg',
           status: 'Active',
           productsCount: 42,
           subCategories: [
-            'Anarkali Sets',
-            'Straight Suit Sets',
-            'Chanderi Suits',
-            'Sharara Sets',
-            'Anarkali & Straight Suits',
+            '3 pcs set',
+            '2 pcs set',
+            'long kurtis',
+            'Short kurtis',
           ],
         },
         {
-          name: 'Kurtis',
-          slug: 'kurtis',
+          name: 'Unstitched Suits',
+          slug: 'unstitched-suits',
           description:
-            'Everyday elegance & Chikankari needlework kurtis in pure georgette and cotton weaves.',
+            'Handcrafted unstitched fabrics in pure georgette, chanderi, and cotton weaves.',
           image: '/images/03_category_kurtis.jpg',
           status: 'Active',
           productsCount: 68,
           subCategories: [
-            'Everyday & Festive Kurtis',
-            'Chikankari Kurtis',
-            'A-Line Kurtis',
+            'Jamdani',
+            'Banarasi silk',
+            'Kanjivaram silk',
+            'Pure cotton',
+            'Muslin silk',
+            'Linen fabric',
           ],
         },
         {
@@ -64,10 +66,10 @@ export class CategoriesService implements OnModuleInit {
           status: 'Active',
           productsCount: 46,
           subCategories: [
-            'Kanjeevaram Silk',
-            'Banarasi Organza',
-            'Heirloom Banarasi',
-            'Tissue & Organza',
+            'Cotton sarees',
+            'Chiffon sarees',
+            'Silk sarees',
+            'Kota sarees',
           ],
         },
       ];
