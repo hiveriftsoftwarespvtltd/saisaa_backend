@@ -30,7 +30,7 @@ export class CategoriesService implements OnModuleInit {
           slug: 'stitched-suits',
           description:
             'Artisanal stitched suit sets, kurtis, coordinate sets and ceremonial attire.',
-          image: '/images/02_category_suits.jpg',
+          image: '/images/10_category_suits.jpg',
           status: 'Active',
           productsCount: 42,
           subCategories: [
@@ -45,7 +45,7 @@ export class CategoriesService implements OnModuleInit {
           slug: 'unstitched-suits',
           description:
             'Handcrafted unstitched fabrics in pure georgette, chanderi, and cotton weaves.',
-          image: '/images/03_category_kurtis.jpg',
+          image: '/images/11_category_kurtis.jpg',
           status: 'Active',
           productsCount: 68,
           subCategories: [
@@ -62,7 +62,7 @@ export class CategoriesService implements OnModuleInit {
           slug: 'sarees',
           description:
             'Six yards of mulberry silk, antique zari banarasi, and organza tissue heirloom drapes.',
-          image: '/images/04_category_sarees.jpg',
+          image: '/images/12_category_sarees.jpg',
           status: 'Active',
           productsCount: 46,
           subCategories: [
