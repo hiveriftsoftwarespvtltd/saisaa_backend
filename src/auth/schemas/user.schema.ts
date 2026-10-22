@@ -14,6 +14,8 @@ export type UserDocument = HydratedDocument<User>;
       delete ret._id;
       delete ret.__v;
       delete ret.password;
+      delete ret.resetPasswordOtp;
+      delete ret.resetPasswordExpires;
       return ret;
     },
   },
@@ -57,6 +59,12 @@ export class User extends BaseDocument {
 
   @Prop({ trim: true, default: '' })
   notes?: string;
+
+  @Prop({ trim: true, default: null })
+  resetPasswordOtp?: string;
+
+  @Prop({ type: Date, default: null })
+  resetPasswordExpires?: Date;
 
   @Prop({ type: [Object], default: [] })
   addresses?: {

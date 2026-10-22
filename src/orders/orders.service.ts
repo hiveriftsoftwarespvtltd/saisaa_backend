@@ -2,10 +2,12 @@ import {
   Injectable,
   NotFoundException,
   ConflictException,
+  BadRequestException,
   OnModuleInit,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
+import * as crypto from 'crypto';
 import { Order, OrderDocument } from './schemas/order.schema';
 import { Product, ProductDocument } from '../products/schemas/product.schema';
 import { CreateOrderDto } from './dto/create-order.dto';
@@ -13,6 +15,8 @@ import { UpdateOrderStatusDto } from './dto/update-order-status.dto';
 
 @Injectable()
 export class OrdersService implements OnModuleInit {
+  private razorpayInstance: any = null;
+
   constructor(
     @InjectModel(Order.name)
     private readonly orderModel: Model<OrderDocument>,
@@ -146,9 +150,13 @@ export class OrdersService implements OnModuleInit {
       createOrderDto.paymentMethod?.toLowerCase().includes('cod') ||
       createOrderDto.paymentMethod?.toLowerCase().includes('cash');
 
+    const isPaidOnline =
+      createOrderDto.paymentStatus === 'Paid' ||
+      (!isCod && Boolean(createOrderDto.razorpayPaymentId));
+
     const defaultTimeline = [
       { status: 'Placed', date: nowTimeStr, done: true },
-      { status: 'Confirmed', date: 'Pending', done: false },
+      { status: 'Confirmed', date: isPaidOnline ? nowTimeStr : 'Pending', done: isPaidOnline },
       { status: 'Processing', date: 'Pending', done: false },
       { status: 'Shipped', date: 'Pending', done: false },
       { status: 'Delivered', date: 'Pending', done: false },
@@ -166,12 +174,16 @@ export class OrdersService implements OnModuleInit {
       shipping: createOrderDto.shipping || 0,
       tax: createOrderDto.tax || 0,
       grandTotal: createOrderDto.grandTotal,
-      paymentMethod: createOrderDto.paymentMethod || 'UPI',
+      paymentMethod: createOrderDto.paymentMethod || (isCod ? 'Cash on Delivery (COD)' : 'Razorpay Online'),
       transactionId:
         createOrderDto.transactionId ||
+        createOrderDto.razorpayPaymentId ||
         `${(createOrderDto.paymentMethod || 'TXN').toUpperCase().slice(0, 3)}-${Date.now().toString().slice(-8)}`,
-      paymentStatus: isCod ? 'Pending' : 'Paid',
-      orderStatus: 'Pending',
+      paymentStatus: createOrderDto.paymentStatus || (isCod ? 'Pending' : 'Paid'),
+      razorpayOrderId: createOrderDto.razorpayOrderId || '',
+      razorpayPaymentId: createOrderDto.razorpayPaymentId || '',
+      razorpaySignature: createOrderDto.razorpaySignature || '',
+      orderStatus: isPaidOnline ? 'Confirmed' : 'Pending',
       timeline: defaultTimeline,
     });
 
@@ -355,5 +367,109 @@ export class OrdersService implements OnModuleInit {
     }
 
     return order.save();
+  }
+
+  // ==========================================
+  // RAZORPAY PAYMENT GATEWAY ENGINE
+  // ==========================================
+
+  private getRazorpay(): any {
+    if (!this.razorpayInstance) {
+      const key_id = process.env.RAZORPAY_KEY_ID || 'rzp_live_Tqs7ZkrK4xTtmd';
+      const key_secret = process.env.RAZORPAY_KEY_SECRET || 'IvXxbgV1q03F70WrTed1eQrH';
+      const Razorpay = require('razorpay');
+      this.razorpayInstance = new Razorpay({
+        key_id,
+        key_secret,
+      });
+    }
+    return this.razorpayInstance;
+  }
+
+  getRazorpayKey(): { keyId: string } {
+    return {
+      keyId: process.env.RAZORPAY_KEY_ID || 'rzp_live_Tqs7ZkrK4xTtmd',
+    };
+  }
+
+  async createRazorpayOrder(amount: number, receipt?: string) {
+    if (!amount || Number(amount) <= 0) {
+      throw new BadRequestException('Payable amount must be greater than zero');
+    }
+
+    const razorpay = this.getRazorpay();
+    const amountInPaise = Math.round(Number(amount) * 100);
+
+    const options = {
+      amount: amountInPaise,
+      currency: 'INR',
+      receipt: receipt || `rcpt_${Date.now().toString().slice(-8)}`,
+      payment_capture: 1,
+    };
+
+    try {
+      const order = await razorpay.orders.create(options);
+      return {
+        id: order.id,
+        amount: order.amount,
+        currency: order.currency,
+        receipt: order.receipt,
+        keyId: process.env.RAZORPAY_KEY_ID || 'rzp_live_Tqs7ZkrK4xTtmd',
+      };
+    } catch (err: any) {
+      console.error('Razorpay order creation error:', err);
+      throw new BadRequestException(
+        err?.error?.description || err?.message || 'Failed to initialize Razorpay checkout order',
+      );
+    }
+  }
+
+  async verifyRazorpayPayment(
+    data: {
+      razorpayOrderId: string;
+      razorpayPaymentId: string;
+      razorpaySignature: string;
+      orderPayload: CreateOrderDto;
+    },
+    userEmail?: string,
+  ): Promise<Order> {
+    const {
+      razorpayOrderId,
+      razorpayPaymentId,
+      razorpaySignature,
+      orderPayload,
+    } = data;
+
+    if (!razorpayOrderId || !razorpayPaymentId || !razorpaySignature) {
+      throw new BadRequestException('Incomplete payment verification payload');
+    }
+
+    if (!orderPayload) {
+      throw new BadRequestException('Order payload is required to finalize order');
+    }
+
+    const secret = process.env.RAZORPAY_KEY_SECRET || 'IvXxbgV1q03F70WrTed1eQrH';
+    const text = `${razorpayOrderId}|${razorpayPaymentId}`;
+    const generatedSignature = crypto
+      .createHmac('sha256', secret)
+      .update(text)
+      .digest('hex');
+
+    if (generatedSignature !== razorpaySignature) {
+      throw new BadRequestException('Invalid payment signature. Verification failed.');
+    }
+
+    // Populate verified payment metadata on order
+    const verifiedOrderPayload: CreateOrderDto = {
+      ...orderPayload,
+      paymentMethod: orderPayload.paymentMethod || 'Razorpay / Online',
+      transactionId: razorpayPaymentId,
+      paymentStatus: 'Paid',
+      razorpayOrderId,
+      razorpayPaymentId,
+      razorpaySignature,
+    };
+
+    return this.create(verifiedOrderPayload, userEmail);
   }
 }

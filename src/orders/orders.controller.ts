@@ -24,6 +24,31 @@ export class OrdersController {
     return this.ordersService.create(createOrderDto, userEmail);
   }
 
+  // ==========================================
+  // RAZORPAY PAYMENT ENDPOINTS
+  // ==========================================
+
+  @Get('razorpay/key')
+  @ResponseMessage('Razorpay public key')
+  async getRazorpayKey() {
+    return this.ordersService.getRazorpayKey();
+  }
+
+  @Post('razorpay/create-order')
+  @ResponseMessage('Razorpay order created successfully')
+  async createRazorpayOrder(
+    @Body() body: { amount: number; receipt?: string },
+  ) {
+    return this.ordersService.createRazorpayOrder(body.amount, body.receipt);
+  }
+
+  @Post('razorpay/verify')
+  @ResponseMessage('Payment verified and order placed successfully')
+  async verifyRazorpayPayment(@Body() body: any, @Req() req: any) {
+    const userEmail = req?.user?.email;
+    return this.ordersService.verifyRazorpayPayment(body, userEmail);
+  }
+
   @Get()
   @ResponseMessage('Orders retrieved successfully')
   async findAll(@Query() query: any) {

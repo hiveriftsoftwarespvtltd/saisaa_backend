@@ -117,7 +117,23 @@ export class CreateOrderDto {
 
   @IsString()
   @IsOptional()
+  paymentStatus?: string;
+
+  @IsString()
+  @IsOptional()
   transactionId?: string;
+
+  @IsString()
+  @IsOptional()
+  razorpayOrderId?: string;
+
+  @IsString()
+  @IsOptional()
+  razorpayPaymentId?: string;
+
+  @IsString()
+  @IsOptional()
+  razorpaySignature?: string;
 
   @IsString()
   @IsOptional()

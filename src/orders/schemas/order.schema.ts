@@ -130,6 +130,15 @@ export class Order extends BaseDocument {
   @Prop({ trim: true, default: '' })
   transactionId?: string;
 
+  @Prop({ trim: true, default: '' })
+  razorpayOrderId?: string;
+
+  @Prop({ trim: true, default: '' })
+  razorpayPaymentId?: string;
+
+  @Prop({ trim: true, default: '' })
+  razorpaySignature?: string;
+
   @Prop({
     required: true,
     default: 'Pending',
