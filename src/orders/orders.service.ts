@@ -174,17 +174,18 @@ export class OrdersService implements OnModuleInit {
       shipping: createOrderDto.shipping || 0,
       tax: createOrderDto.tax || 0,
       grandTotal: createOrderDto.grandTotal,
-      paymentMethod: createOrderDto.paymentMethod || (isCod ? 'Cash on Delivery (COD)' : 'Razorpay Online'),
+      paymentMethod: createOrderDto.paymentMethod || 'Razorpay Online',
       transactionId:
         createOrderDto.transactionId ||
         createOrderDto.razorpayPaymentId ||
-        `${(createOrderDto.paymentMethod || 'TXN').toUpperCase().slice(0, 3)}-${Date.now().toString().slice(-8)}`,
-      paymentStatus: createOrderDto.paymentStatus || (isCod ? 'Pending' : 'Paid'),
+        `RAZORPAY-${Date.now().toString().slice(-8)}`,
+      paymentStatus: createOrderDto.paymentStatus || 'Paid',
       razorpayOrderId: createOrderDto.razorpayOrderId || '',
       razorpayPaymentId: createOrderDto.razorpayPaymentId || '',
       razorpaySignature: createOrderDto.razorpaySignature || '',
-      orderStatus: isPaidOnline ? 'Confirmed' : 'Pending',
+      orderStatus: 'Confirmed',
       timeline: defaultTimeline,
+
     });
 
     const savedOrder = await newOrder.save();
