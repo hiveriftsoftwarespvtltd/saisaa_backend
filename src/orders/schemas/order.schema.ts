@@ -53,6 +53,12 @@ export class OrderItem {
 
   @Prop({ default: 0 })
   stitchingFee?: number;
+
+  @Prop({ default: 5 })
+  gstRate?: number;
+
+  @Prop({ default: 0 })
+  gstAmount?: number;
 }
 
 @Schema({ _id: false })

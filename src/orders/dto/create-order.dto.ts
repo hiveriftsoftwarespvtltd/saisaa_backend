@@ -71,6 +71,14 @@ export class OrderItemDto {
   @IsNumber()
   @IsOptional()
   stitchingFee?: number;
+
+  @IsNumber()
+  @IsOptional()
+  gstRate?: number;
+
+  @IsNumber()
+  @IsOptional()
+  gstAmount?: number;
 }
 
 export class CreateOrderDto {
