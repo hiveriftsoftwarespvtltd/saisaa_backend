@@ -127,7 +127,7 @@ export class Order extends BaseDocument {
   @Prop({ default: 0, min: 0 })
   tax: number;
 
-  @Prop({ required: true, min: 0 })
+  @Prop({ default: 0, min: 0 })
   grandTotal: number;
 
   @Prop({ required: true, default: 'UPI', trim: true })

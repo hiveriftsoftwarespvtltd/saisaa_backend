@@ -116,8 +116,9 @@ export class CreateOrderDto {
   tax?: number;
 
   @IsNumber()
+  @IsOptional()
   @Min(0)
-  grandTotal: number;
+  grandTotal?: number;
 
   @IsString()
   @IsOptional()

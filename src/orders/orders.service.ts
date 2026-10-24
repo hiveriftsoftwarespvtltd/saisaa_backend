@@ -162,18 +162,29 @@ export class OrdersService implements OnModuleInit {
       { status: 'Delivered', date: 'Pending', done: false },
     ];
 
+    const subtotal = Number(createOrderDto.subtotal) || 0;
+    const discount = Number(createOrderDto.discount) || 0;
+    const shipping = Number(createOrderDto.shipping) || 0;
+    const tax = Number(createOrderDto.tax) || 0;
+    const computedTotal = Math.max(0, subtotal - discount + tax + shipping);
+
+    const calculatedGrandTotal =
+      typeof createOrderDto.grandTotal === 'number' && !isNaN(createOrderDto.grandTotal) && createOrderDto.grandTotal > 0
+        ? createOrderDto.grandTotal
+        : (createOrderDto as any).amount || (createOrderDto as any).total || computedTotal;
+
     const newOrder = new this.orderModel({
       ...createOrderDto,
       orderId,
       userEmail: userEmail || createOrderDto.customer.email.toLowerCase(),
       date: formattedDate,
-      amount: createOrderDto.subtotal,
-      subtotal: createOrderDto.subtotal,
-      discount: createOrderDto.discount || 0,
+      amount: calculatedGrandTotal,
+      subtotal,
+      discount,
       couponCode: createOrderDto.couponCode || '',
-      shipping: createOrderDto.shipping || 0,
-      tax: createOrderDto.tax || 0,
-      grandTotal: createOrderDto.grandTotal,
+      shipping,
+      tax,
+      grandTotal: calculatedGrandTotal,
       paymentMethod: createOrderDto.paymentMethod || 'Razorpay Online',
       transactionId:
         createOrderDto.transactionId ||
@@ -185,7 +196,6 @@ export class OrdersService implements OnModuleInit {
       razorpaySignature: createOrderDto.razorpaySignature || '',
       orderStatus: 'Confirmed',
       timeline: defaultTimeline,
-
     });
 
     const savedOrder = await newOrder.save();
@@ -460,9 +470,21 @@ export class OrdersService implements OnModuleInit {
       throw new BadRequestException('Invalid payment signature. Verification failed.');
     }
 
+    const subtotal = Number(orderPayload.subtotal) || 0;
+    const discount = Number(orderPayload.discount) || 0;
+    const shipping = Number(orderPayload.shipping) || 0;
+    const tax = Number(orderPayload.tax) || 0;
+    const fallbackTotal = Math.max(0, subtotal - discount + tax + shipping);
+
+    const grandTotal =
+      typeof orderPayload.grandTotal === 'number' && !isNaN(orderPayload.grandTotal) && orderPayload.grandTotal > 0
+        ? orderPayload.grandTotal
+        : (orderPayload as any).amount || (orderPayload as any).total || fallbackTotal;
+
     // Populate verified payment metadata on order
     const verifiedOrderPayload: CreateOrderDto = {
       ...orderPayload,
+      grandTotal,
       paymentMethod: orderPayload.paymentMethod || 'Razorpay / Online',
       transactionId: razorpayPaymentId,
       paymentStatus: 'Paid',
