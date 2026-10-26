@@ -393,7 +393,8 @@ export class ProductsService implements OnModuleInit {
     }
 
     if (query.category && query.category !== 'all') {
-      filter.category = query.category.toLowerCase().trim();
+      const cleanCat = query.category.trim();
+      filter.category = { $regex: new RegExp(cleanCat.replace(/[-_]/g, '[-\\s_]?'), 'i') };
     }
 
     if (query.subCategory && query.subCategory !== 'all') {
@@ -502,6 +503,92 @@ export class ProductsService implements OnModuleInit {
     }
 
     return product;
+  }
+
+  async findRelated(idOrSlug: string, limit: number = 4): Promise<Product[]> {
+    let currentProduct: ProductDocument | null = null;
+    try {
+      currentProduct = (await this.findOne(idOrSlug)) as ProductDocument;
+    } catch {
+      currentProduct = null;
+    }
+
+    if (!currentProduct) {
+      return this.productModel
+        .find({ status: 'Active' })
+        .limit(limit)
+        .sort({ isBestSeller: -1, createdAt: -1 })
+        .exec();
+    }
+
+    const currentId = currentProduct._id;
+    const cat = (currentProduct.category || '').trim();
+    const subCat = (currentProduct.subCategory || '').trim();
+
+    // Flexible regex for category matching (matches 'suits', 'stitched-suits', 'stitched suits', etc.)
+    const normalizedCat = cat.toLowerCase().replace(/[-_\s]+/g, '');
+    let catRegex: RegExp;
+    if (normalizedCat.includes('unstitched')) {
+      catRegex = /unstitched/i;
+    } else if (normalizedCat.includes('stitched') || normalizedCat.includes('suit')) {
+      catRegex = /(stitched|suit)/i;
+    } else if (normalizedCat.includes('saree')) {
+      catRegex = /saree/i;
+    } else if (normalizedCat.includes('kurti')) {
+      catRegex = /kurti/i;
+    } else if (cat) {
+      catRegex = new RegExp(cat.replace(/[-_]/g, '[-\\s_]?'), 'i');
+    } else {
+      catRegex = /.*/;
+    }
+
+    // 1. Try to find products from the exact same subCategory first
+    let related: ProductDocument[] = [];
+    if (subCat) {
+      related = await this.productModel
+        .find({
+          _id: { $ne: currentId },
+          status: 'Active',
+          category: { $regex: catRegex },
+          subCategory: { $regex: new RegExp(`^${subCat.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') },
+        })
+        .limit(limit)
+        .sort({ inStock: -1, isBestSeller: -1, createdAt: -1 })
+        .exec();
+    }
+
+    // 2. If needed, backfill with products from the same category
+    if (related.length < limit) {
+      const existingIds = [currentId, ...related.map((p) => p._id)];
+      const sameCategory = await this.productModel
+        .find({
+          _id: { $nin: existingIds },
+          status: 'Active',
+          category: { $regex: catRegex },
+        })
+        .limit(limit - related.length)
+        .sort({ inStock: -1, isBestSeller: -1, createdAt: -1 })
+        .exec();
+
+      related = [...related, ...sameCategory];
+    }
+
+    // 3. Fallback: if category has very few items, backfill with other active products
+    if (related.length < limit) {
+      const existingIds = [currentId, ...related.map((p) => p._id)];
+      const backfill = await this.productModel
+        .find({
+          _id: { $nin: existingIds },
+          status: 'Active',
+        })
+        .limit(limit - related.length)
+        .sort({ isBestSeller: -1, createdAt: -1 })
+        .exec();
+
+      related = [...related, ...backfill];
+    }
+
+    return related;
   }
 
   async create(createProductDto: CreateProductDto): Promise<Product> {

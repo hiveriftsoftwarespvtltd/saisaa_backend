@@ -23,6 +23,16 @@ export class ProductsController {
     return this.productsService.findAll(query);
   }
 
+  @Get(':idOrSlug/related')
+  @ResponseMessage('Related category products retrieved successfully')
+  async findRelated(
+    @Param('idOrSlug') idOrSlug: string,
+    @Query('limit') limit?: number,
+  ) {
+    const numLimit = limit ? Number(limit) : 4;
+    return this.productsService.findRelated(idOrSlug, numLimit);
+  }
+
   @Get(':idOrSlug')
   @ResponseMessage('Product retrieved successfully')
   async findOne(@Param('idOrSlug') idOrSlug: string) {
