@@ -124,6 +124,10 @@ export class CreateProductDto {
   @IsOptional()
   care?: string;
 
+  @IsBoolean()
+  @IsOptional()
+  isFreeSize?: boolean;
+
   @IsArray()
   @IsString({ each: true })
   @IsOptional()

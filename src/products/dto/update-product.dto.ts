@@ -105,6 +105,10 @@ export class UpdateProductDto {
   @IsOptional()
   care?: string;
 
+  @IsBoolean()
+  @IsOptional()
+  isFreeSize?: boolean;
+
   @IsArray()
   @IsString({ each: true })
   @IsOptional()

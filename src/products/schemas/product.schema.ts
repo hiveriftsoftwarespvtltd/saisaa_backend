@@ -96,6 +96,9 @@ export class Product extends BaseDocument {
   @Prop({ trim: true })
   care?: string;
 
+  @Prop({ default: false, index: true })
+  isFreeSize: boolean;
+
   @Prop({ type: [String], default: [] })
   sizes: string[];
 

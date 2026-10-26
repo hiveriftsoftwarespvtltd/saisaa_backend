@@ -620,6 +620,10 @@ export class ProductsService implements OnModuleInit {
       slug,
       sku,
       category: createProductDto.category.toLowerCase(),
+      isFreeSize:
+        createProductDto.isFreeSize !== undefined
+          ? Boolean(createProductDto.isFreeSize)
+          : Boolean(createProductDto.sizes?.includes('Free Size')),
       images:
         createProductDto.images && createProductDto.images.length > 0
           ? createProductDto.images
