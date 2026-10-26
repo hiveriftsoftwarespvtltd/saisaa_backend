@@ -393,8 +393,19 @@ export class ProductsService implements OnModuleInit {
     }
 
     if (query.category && query.category !== 'all') {
-      const cleanCat = query.category.trim();
-      filter.category = { $regex: new RegExp(cleanCat.replace(/[-_]/g, '[-\\s_]?'), 'i') };
+      const cleanCat = query.category.trim().toLowerCase().replace(/[-_\s]+/g, '');
+      if (cleanCat.includes('unstitched')) {
+        filter.category = { $regex: /unstitched/i };
+      } else if (cleanCat.includes('stitched') || cleanCat.includes('suit')) {
+        filter.category = { $regex: /stitched|suit/i, $not: /unstitched/i };
+      } else if (cleanCat.includes('saree')) {
+        filter.category = { $regex: /saree/i };
+      } else if (cleanCat.includes('kurti')) {
+        filter.category = { $regex: /kurti/i };
+      } else {
+        const escaped = query.category.trim().replace(/[-_]/g, '[-\\s_]?');
+        filter.category = { $regex: new RegExp(`^${escaped}$`, 'i') };
+      }
     }
 
     if (query.subCategory && query.subCategory !== 'all') {
@@ -525,31 +536,31 @@ export class ProductsService implements OnModuleInit {
     const cat = (currentProduct.category || '').trim();
     const subCat = (currentProduct.subCategory || '').trim();
 
-    // Flexible regex for category matching (matches 'suits', 'stitched-suits', 'stitched suits', etc.)
+    // Strict category condition (stitched suits will NEVER match unstitched suits)
     const normalizedCat = cat.toLowerCase().replace(/[-_\s]+/g, '');
-    let catRegex: RegExp;
+    let categoryCondition: any;
     if (normalizedCat.includes('unstitched')) {
-      catRegex = /unstitched/i;
+      categoryCondition = { $regex: /unstitched/i };
     } else if (normalizedCat.includes('stitched') || normalizedCat.includes('suit')) {
-      catRegex = /(stitched|suit)/i;
+      categoryCondition = { $regex: /stitched|suit/i, $not: /unstitched/i };
     } else if (normalizedCat.includes('saree')) {
-      catRegex = /saree/i;
+      categoryCondition = { $regex: /saree/i };
     } else if (normalizedCat.includes('kurti')) {
-      catRegex = /kurti/i;
+      categoryCondition = { $regex: /kurti/i };
     } else if (cat) {
-      catRegex = new RegExp(cat.replace(/[-_]/g, '[-\\s_]?'), 'i');
+      categoryCondition = { $regex: new RegExp(`^${cat.replace(/[-_]/g, '[-\\s_]?')}$`, 'i') };
     } else {
-      catRegex = /.*/;
+      categoryCondition = { $exists: true };
     }
 
-    // 1. Try to find products from the exact same subCategory first
+    // 1. Try to find products from the exact same subCategory and same category first
     let related: ProductDocument[] = [];
     if (subCat) {
       related = await this.productModel
         .find({
           _id: { $ne: currentId },
           status: 'Active',
-          category: { $regex: catRegex },
+          category: categoryCondition,
           subCategory: { $regex: new RegExp(`^${subCat.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') },
         })
         .limit(limit)
@@ -557,35 +568,20 @@ export class ProductsService implements OnModuleInit {
         .exec();
     }
 
-    // 2. If needed, backfill with products from the same category
+    // 2. If needed, backfill strictly with products from the same category
     if (related.length < limit) {
       const existingIds = [currentId, ...related.map((p) => p._id)];
       const sameCategory = await this.productModel
         .find({
           _id: { $nin: existingIds },
           status: 'Active',
-          category: { $regex: catRegex },
+          category: categoryCondition,
         })
         .limit(limit - related.length)
         .sort({ inStock: -1, isBestSeller: -1, createdAt: -1 })
         .exec();
 
       related = [...related, ...sameCategory];
-    }
-
-    // 3. Fallback: if category has very few items, backfill with other active products
-    if (related.length < limit) {
-      const existingIds = [currentId, ...related.map((p) => p._id)];
-      const backfill = await this.productModel
-        .find({
-          _id: { $nin: existingIds },
-          status: 'Active',
-        })
-        .limit(limit - related.length)
-        .sort({ isBestSeller: -1, createdAt: -1 })
-        .exec();
-
-      related = [...related, ...backfill];
     }
 
     return related;
