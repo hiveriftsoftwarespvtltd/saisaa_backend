@@ -17,6 +17,7 @@ import {
   CreateHeroMarqueeDto,
   UpdateHeroMarqueeDto,
 } from './dto/hero-marquee.dto';
+import { UpdatePageHeroDto } from './dto/page-hero.dto';
 import { ResponseMessage } from '../common/decorators/response-message.decorator';
 
 @Controller('hero-banners')
@@ -24,6 +25,27 @@ export class HeroBannersController {
   constructor(private readonly heroBannersService: HeroBannersService) {}
 
   // Static / sub-resource routes declared BEFORE parameterized :id routes
+  @Get('pages')
+  @ResponseMessage('Page hero banners retrieved successfully')
+  async findAllPages() {
+    return this.heroBannersService.findAllPages();
+  }
+
+  @Get('pages/:pageKey')
+  @ResponseMessage('Page hero banner retrieved successfully')
+  async findPageByKey(@Param('pageKey') pageKey: string) {
+    return this.heroBannersService.findPageByKey(pageKey);
+  }
+
+  @Put('pages/:pageKey')
+  @ResponseMessage('Page hero banner updated successfully')
+  async updatePageByKey(
+    @Param('pageKey') pageKey: string,
+    @Body() dto: UpdatePageHeroDto,
+  ) {
+    return this.heroBannersService.updatePageByKey(pageKey, dto);
+  }
+
   @Get('marquee')
   @ResponseMessage('Hero marquee highlights retrieved successfully')
   async findAllMarquee(@Query('status') status?: string) {
@@ -91,4 +113,3 @@ export class HeroBannersController {
     return this.heroBannersService.remove(id);
   }
 }
-

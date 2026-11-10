@@ -7,6 +7,8 @@ import {
   HeroBannerSchema,
   HeroMarquee,
   HeroMarqueeSchema,
+  PageHero,
+  PageHeroSchema,
 } from './schemas/hero-banner.schema';
 
 @Module({
@@ -14,6 +16,7 @@ import {
     MongooseModule.forFeature([
       { name: HeroBanner.name, schema: HeroBannerSchema },
       { name: HeroMarquee.name, schema: HeroMarqueeSchema },
+      { name: PageHero.name, schema: PageHeroSchema },
     ]),
   ],
   controllers: [HeroBannersController],
@@ -21,4 +24,3 @@ import {
   exports: [HeroBannersService],
 })
 export class HeroBannersModule {}
-

@@ -11,6 +11,8 @@ import {
   HeroBannerDocument,
   HeroMarquee,
   HeroMarqueeDocument,
+  PageHero,
+  PageHeroDocument,
 } from './schemas/hero-banner.schema';
 import { CreateHeroBannerDto } from './dto/create-hero-banner.dto';
 import { UpdateHeroBannerDto } from './dto/update-hero-banner.dto';
@@ -18,11 +20,124 @@ import {
   CreateHeroMarqueeDto,
   UpdateHeroMarqueeDto,
 } from './dto/hero-marquee.dto';
+import { UpdatePageHeroDto } from './dto/page-hero.dto';
 
 const SLIDE_CMS_TYPE = 'hero_slide';
 const MARQUEE_CMS_TYPE = 'hero_marquee';
+const PAGE_HERO_CMS_TYPE = 'page_hero';
 
-const makeSystemKey = (prefix: string, id: Types.ObjectId) =>
+const PAGE_KEY_ORDER = [
+  'stitched-suits',
+  'unstitched-suits',
+  'sarees',
+  'about',
+  'contact',
+] as const;
+
+const DEFAULT_PAGE_HEROES: Array<{
+  pageKey: (typeof PAGE_KEY_ORDER)[number];
+  pageLabel: string;
+  routePath: string;
+  image: string;
+  mobileImage: string;
+  eyebrow: string;
+  title: string;
+  subtitle: string;
+  ctaText: string;
+  ctaLink: string;
+  titleStyle: string;
+  overlayScrim: string;
+  objectPosition: string;
+  status: string;
+}> = [
+  {
+    pageKey: 'stitched-suits',
+    pageLabel: 'Stitched Suits',
+    routePath: '/stitched-suits',
+    image: '/images/hero/hero-slide-2.jpg',
+    mobileImage: '',
+    eyebrow: 'TAILORED COUTURE',
+    title: 'Stitched Suits',
+    subtitle:
+      'Explore our latest collection of premium tailored & stitched suit sets crafted for timeless style and modern womanhood.',
+    ctaText: '',
+    ctaLink: '/stitched-suits',
+    titleStyle: 'serif',
+    overlayScrim: 'dark',
+    objectPosition: 'center',
+    status: 'Active',
+  },
+  {
+    pageKey: 'unstitched-suits',
+    pageLabel: 'Unstitched Suits',
+    routePath: '/unstitched-suits',
+    image: '/images/hero/hero-slide-3.jpg',
+    mobileImage: '',
+    eyebrow: 'ARTISANAL WEAVES',
+    title: 'Unstitched Suits',
+    subtitle:
+      'Explore our curated unstitched suit sets giving you the bespoke freedom to style and tailor to your exact grace.',
+    ctaText: '',
+    ctaLink: '/unstitched-suits',
+    titleStyle: 'serif',
+    overlayScrim: 'dark',
+    objectPosition: 'center',
+    status: 'Active',
+  },
+  {
+    pageKey: 'sarees',
+    pageLabel: 'Sarees',
+    routePath: '/sarees',
+    image: '/images/hero/hero-slide-5.jpg',
+    mobileImage: '',
+    eyebrow: 'SIX YARDS OF GRACE',
+    title: 'Heirloom Sarees',
+    subtitle:
+      'Six yards of timeless royal grace woven in pure mulberry silk, antique gold tissue, and gossamer organza.',
+    ctaText: '',
+    ctaLink: '/sarees',
+    titleStyle: 'serif',
+    overlayScrim: 'dark',
+    objectPosition: 'center',
+    status: 'Active',
+  },
+  {
+    pageKey: 'about',
+    pageLabel: 'About Us',
+    routePath: '/about',
+    image: '/images/hero/hero-slide-1.jpg',
+    mobileImage: '',
+    eyebrow: 'ABOUT SAISAA',
+    title: 'More Than Fashion',
+    subtitle:
+      "Unstitched Suits for Every Story — bringing together Indian craftsmanship and the grace of today's modern woman.",
+    ctaText: 'Our Story',
+    ctaLink: '#our-story',
+    titleStyle: 'serif',
+    overlayScrim: 'dark',
+    objectPosition: 'center 35%',
+    status: 'Active',
+  },
+  {
+    pageKey: 'contact',
+    pageLabel: 'Contact Us',
+    routePath: '/contact',
+    image: '/images/hero/hero-slide-2.jpg',
+    mobileImage: '',
+    eyebrow: 'ROYAL CONCIERGE',
+    title: 'Flagship Couture Studio',
+    subtitle:
+      'Book a private styling consultation, inquire about bespoke bridal trousseau sets, or consult our master couturiers.',
+    ctaText: '',
+    ctaLink: '/contact',
+    titleStyle: 'serif',
+    overlayScrim: 'dark',
+    objectPosition: 'center',
+    status: 'Active',
+  },
+];
+
+const makeSystemKey = (prefix: string, id: Types.ObjectId | string) =>
   `cms-${prefix}-${id.toString()}@system.saisaa.local`;
 
 @Injectable()
@@ -34,6 +149,8 @@ export class HeroBannersService implements OnModuleInit {
     private readonly heroBannerModel: Model<HeroBannerDocument>,
     @InjectModel(HeroMarquee.name)
     private readonly heroMarqueeModel: Model<HeroMarqueeDocument>,
+    @InjectModel(PageHero.name)
+    private readonly pageHeroModel: Model<PageHeroDocument>,
   ) {}
 
   async onModuleInit() {
@@ -174,6 +291,22 @@ export class HeroBannersService implements OnModuleInit {
       });
 
       await this.heroMarqueeModel.insertMany(defaultMarquee);
+    }
+
+    // Ensure all 5 PageHero configs exist
+    for (const def of DEFAULT_PAGE_HEROES) {
+      const exists = await this.pageHeroModel
+        .findOne({ cmsType: PAGE_HERO_CMS_TYPE, pageKey: def.pageKey })
+        .exec();
+      if (!exists) {
+        const docId = new Types.ObjectId();
+        await this.pageHeroModel.create({
+          _id: docId,
+          cmsType: PAGE_HERO_CMS_TYPE,
+          userEmail: makeSystemKey(`page-${def.pageKey}`, docId),
+          ...def,
+        });
+      }
     }
   }
 
@@ -336,5 +469,89 @@ export class HeroBannersService implements OnModuleInit {
       throw new NotFoundException('Marquee highlight not found');
     }
     return { success: true };
+  }
+
+  // ==================== INNER PAGE HERO BANNERS ====================
+
+  async findAllPages(): Promise<PageHero[]> {
+    const items = await this.pageHeroModel
+      .find({ cmsType: PAGE_HERO_CMS_TYPE })
+      .exec();
+
+    const byKey = new Map(items.map((item) => [item.pageKey, item]));
+    const ordered: PageHero[] = [];
+    for (const key of PAGE_KEY_ORDER) {
+      const found = byKey.get(key);
+      if (found) ordered.push(found);
+    }
+    return ordered;
+  }
+
+  async findPageByKey(pageKey: string): Promise<PageHero> {
+    const normalizedKey = pageKey.trim().toLowerCase();
+    const defaultCfg = DEFAULT_PAGE_HEROES.find(
+      (d) => d.pageKey === normalizedKey,
+    );
+    if (!defaultCfg) {
+      throw new NotFoundException(`Page hero "${pageKey}" not found`);
+    }
+
+    let doc = await this.pageHeroModel
+      .findOne({ cmsType: PAGE_HERO_CMS_TYPE, pageKey: normalizedKey })
+      .exec();
+
+    if (!doc) {
+      const docId = new Types.ObjectId();
+      doc = await this.pageHeroModel.create({
+        _id: docId,
+        cmsType: PAGE_HERO_CMS_TYPE,
+        userEmail: makeSystemKey(`page-${normalizedKey}`, docId),
+        ...defaultCfg,
+      });
+    }
+
+    return doc;
+  }
+
+  async updatePageByKey(
+    pageKey: string,
+    dto: UpdatePageHeroDto,
+  ): Promise<PageHero> {
+    const normalizedKey = pageKey.trim().toLowerCase();
+    const defaultCfg = DEFAULT_PAGE_HEROES.find(
+      (d) => d.pageKey === normalizedKey,
+    );
+    if (!defaultCfg) {
+      throw new NotFoundException(`Page hero "${pageKey}" not found`);
+    }
+
+    const existing = await this.pageHeroModel
+      .findOne({ cmsType: PAGE_HERO_CMS_TYPE, pageKey: normalizedKey })
+      .exec();
+
+    if (!existing) {
+      const docId = new Types.ObjectId();
+      return this.pageHeroModel.create({
+        _id: docId,
+        cmsType: PAGE_HERO_CMS_TYPE,
+        userEmail: makeSystemKey(`page-${normalizedKey}`, docId),
+        ...defaultCfg,
+        ...dto,
+        pageKey: normalizedKey,
+      });
+    }
+
+    const updated = await this.pageHeroModel
+      .findOneAndUpdate(
+        { _id: existing._id, cmsType: PAGE_HERO_CMS_TYPE },
+        dto,
+        { new: true },
+      )
+      .exec();
+
+    if (!updated) {
+      throw new NotFoundException(`Page hero "${pageKey}" not found`);
+    }
+    return updated;
   }
 }
