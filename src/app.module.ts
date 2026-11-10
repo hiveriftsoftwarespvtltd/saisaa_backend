@@ -17,6 +17,7 @@ import { ReviewsModule } from './reviews/reviews.module';
 import { InventoryModule } from './inventory/inventory.module';
 import { InquiriesModule } from './inquiries/inquiries.module';
 import { HeroBannersModule } from './hero-banners/hero-banners.module';
+import { ContentModule } from './content/content.module';
 
 @Module({
   imports: [
@@ -71,6 +72,9 @@ import { HeroBannersModule } from './hero-banners/hero-banners.module';
 
     // Hero Banners module (Dynamic hero slideshow & marquee highlights controlled by Admin)
     HeroBannersModule,
+
+    // Content module (Editorial banners & Our Story showcase controlled by Admin)
+    ContentModule,
   ],
   controllers: [AppController],
   providers: [AppService],
