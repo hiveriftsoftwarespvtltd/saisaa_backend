@@ -16,6 +16,7 @@ import { CouponsModule } from './coupons/coupons.module';
 import { ReviewsModule } from './reviews/reviews.module';
 import { InventoryModule } from './inventory/inventory.module';
 import { InquiriesModule } from './inquiries/inquiries.module';
+import { HeroBannersModule } from './hero-banners/hero-banners.module';
 
 @Module({
   imports: [
@@ -67,6 +68,9 @@ import { InquiriesModule } from './inquiries/inquiries.module';
 
     // Inquiries module (Contact concierge & bespoke bridal consultations)
     InquiriesModule,
+
+    // Hero Banners module (Dynamic hero slideshow & marquee highlights controlled by Admin)
+    HeroBannersModule,
   ],
   controllers: [AppController],
   providers: [AppService],
