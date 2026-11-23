@@ -588,31 +588,61 @@ export class ProductsService implements OnModuleInit {
   }
 
   async create(createProductDto: CreateProductDto): Promise<Product> {
-    const slug =
+    const rawName = (createProductDto.name || '').trim();
+    let baseSlug =
       createProductDto.slug?.trim().toLowerCase() ||
-      createProductDto.name
-        .trim()
+      rawName
         .toLowerCase()
         .replace(/[^a-z0-9]+/g, '-')
-        .replace(/^-|-$/g, '');
+        .replace(/^-|-$/g, '') ||
+      'product';
 
-    const customId =
-      createProductDto.customId ||
-      `saisaa-${createProductDto.category.toLowerCase()}-${Date.now().toString().slice(-4)}`;
-
-    const sku =
-      (createProductDto.sku && createProductDto.sku.trim()) ||
-      `SAI-${createProductDto.category.slice(0, 2).toUpperCase()}-${Date.now().toString().slice(-4)}`;
-
-    const existing = await this.productModel
-      .findOne({
-        $or: [{ customId }, { slug }],
-      })
-      .exec();
-
-    if (existing) {
-      throw new ConflictException(`Product with slug/ID already exists`);
+    // Auto-generate unique slug if already exists in DB
+    let slug = baseSlug;
+    let slugCounter = 1;
+    while (await this.productModel.exists({ slug })) {
+      slugCounter++;
+      slug = `${baseSlug}-${slugCounter}`;
     }
+
+    // Auto-generate unique customId if already exists in DB
+    const categoryKey = (createProductDto.category || 'general')
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-');
+    let customId =
+      createProductDto.customId ||
+      `saisaa-${categoryKey}-${Math.floor(1000 + Math.random() * 9000)}`;
+
+    let idCounter = 1;
+    while (await this.productModel.exists({ customId })) {
+      idCounter++;
+      customId = `saisaa-${categoryKey}-${Math.floor(1000 + Math.random() * 9000)}-${idCounter}`;
+    }
+
+    // Auto-generate or ensure unique SKU if already exists in DB
+    let sku = (createProductDto.sku && createProductDto.sku.trim()) || '';
+    if (!sku) {
+      const catPrefix = categoryKey.slice(0, 2).toUpperCase() || 'PR';
+      sku = `SAI-${catPrefix}-${Math.floor(1000 + Math.random() * 9000)}`;
+    }
+    let uniqueSku = sku;
+    let skuCounter = 1;
+    while (await this.productModel.exists({ sku: uniqueSku })) {
+      skuCounter++;
+      uniqueSku = `${sku}-${skuCounter}`;
+    }
+    sku = uniqueSku;
+
+    const finalCover =
+      createProductDto.cardImage ||
+      createProductDto.coverImage ||
+      (createProductDto.images && createProductDto.images[0]) ||
+      '';
+
+    const finalImages =
+      createProductDto.images && createProductDto.images.length > 0
+        ? createProductDto.images
+        : (finalCover ? [finalCover] : []);
 
     const created = new this.productModel({
       ...createProductDto,
@@ -624,19 +654,9 @@ export class ProductsService implements OnModuleInit {
         createProductDto.isFreeSize !== undefined
           ? Boolean(createProductDto.isFreeSize)
           : Boolean(createProductDto.sizes?.includes('Free Size')),
-      images:
-        createProductDto.images && createProductDto.images.length > 0
-          ? createProductDto.images
-          : [createProductDto.cardImage || '/images/05_shop_product_card_1.jpg'],
-      cardImage:
-        createProductDto.cardImage ||
-        (createProductDto.images && createProductDto.images[0]) ||
-        '/images/05_shop_product_card_1.jpg',
-      coverImage:
-        createProductDto.coverImage ||
-        createProductDto.cardImage ||
-        (createProductDto.images && createProductDto.images[0]) ||
-        '/images/05_shop_product_card_1.jpg',
+      images: finalImages,
+      cardImage: finalCover,
+      coverImage: finalCover,
     });
 
     return created.save();
