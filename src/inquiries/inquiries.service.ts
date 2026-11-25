@@ -8,6 +8,7 @@ import { Model, Types } from 'mongoose';
 import { Inquiry, InquiryDocument, InquiryStatus } from './schemas/inquiry.schema';
 import { CreateInquiryDto } from './dto/create-inquiry.dto';
 import { UpdateInquiryStatusDto } from './dto/update-inquiry-status.dto';
+import { escapeRegex } from '../common/utils/regex.util';
 
 @Injectable()
 export class InquiriesService implements OnModuleInit {
@@ -107,13 +108,13 @@ export class InquiriesService implements OnModuleInit {
       filter.status = query.status;
     }
 
-    if (query.search) {
-      const regex = new RegExp(query.search, 'i');
+    if (query.search && query.search.trim()) {
+      const sanitized = escapeRegex(query.search.trim());
       filter.$or = [
-        { name: regex },
-        { email: regex },
-        { phone: regex },
-        { message: regex },
+        { name: { $regex: sanitized, $options: 'i' } },
+        { email: { $regex: sanitized, $options: 'i' } },
+        { phone: { $regex: sanitized, $options: 'i' } },
+        { message: { $regex: sanitized, $options: 'i' } },
       ];
     }
 

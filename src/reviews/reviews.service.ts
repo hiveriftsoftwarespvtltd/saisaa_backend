@@ -11,6 +11,7 @@ import { Order, OrderDocument } from '../orders/schemas/order.schema';
 import { Product, ProductDocument } from '../products/schemas/product.schema';
 import { CreateReviewDto } from './dto/create-review.dto';
 import { UpdateReviewStatusDto } from './dto/update-review-status.dto';
+import { escapeRegex } from '../common/utils/regex.util';
 
 @Injectable()
 export class ReviewsService implements OnModuleInit {
@@ -351,13 +352,13 @@ export class ReviewsService implements OnModuleInit {
       filter.productId = query.productId;
     }
 
-    if (query.search) {
-      const regex = new RegExp(query.search, 'i');
+    if (query.search && query.search.trim()) {
+      const sanitized = escapeRegex(query.search.trim());
       filter.$or = [
-        { customer: regex },
-        { productName: regex },
-        { review: regex },
-        { title: regex },
+        { customer: { $regex: sanitized, $options: 'i' } },
+        { productName: { $regex: sanitized, $options: 'i' } },
+        { review: { $regex: sanitized, $options: 'i' } },
+        { title: { $regex: sanitized, $options: 'i' } },
       ];
     }
 

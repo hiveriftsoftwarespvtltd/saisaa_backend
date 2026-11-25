@@ -6,12 +6,18 @@ import {
   Param,
   Body,
   Query,
+  UseGuards,
 } from '@nestjs/common';
 import { InventoryService } from './inventory.service';
 import { AdjustStockDto } from './dto/adjust-stock.dto';
 import { ResponseMessage } from '../common/decorators/response-message.decorator';
+import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
+import { RolesGuard } from '../common/guards/roles.guard';
+import { Roles } from '../common/decorators/roles.decorator';
 
 @Controller('inventory')
+@UseGuards(JwtAuthGuard, RolesGuard)
+@Roles('admin')
 export class InventoryController {
   constructor(private readonly inventoryService: InventoryService) {}
 

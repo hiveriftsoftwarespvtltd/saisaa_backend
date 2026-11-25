@@ -8,19 +8,27 @@ import {
   Param,
   Body,
   Query,
+  UseGuards,
 } from '@nestjs/common';
 import { InquiriesService } from './inquiries.service';
 import { CreateInquiryDto } from './dto/create-inquiry.dto';
 import { UpdateInquiryStatusDto } from './dto/update-inquiry-status.dto';
 import { ResponseMessage } from '../common/decorators/response-message.decorator';
+import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
+import { RolesGuard } from '../common/guards/roles.guard';
+import { Roles } from '../common/decorators/roles.decorator';
+import { Public } from '../common/decorators/public.decorator';
 
 @Controller('inquiries')
+@UseGuards(JwtAuthGuard, RolesGuard)
+@Roles('admin')
 export class InquiriesController {
   constructor(private readonly inquiriesService: InquiriesService) {}
 
   /**
    * Submit inquiry from public contact page
    */
+  @Public()
   @Post()
   @ResponseMessage('Your royal consultation request has been received. Our concierge will contact you shortly.')
   async create(@Body() createInquiryDto: CreateInquiryDto) {

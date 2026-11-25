@@ -6,12 +6,17 @@ import {
   UploadedFiles,
   BadRequestException,
   Req,
+  UseGuards,
 } from '@nestjs/common';
 import { FileInterceptor, FilesInterceptor } from '@nestjs/platform-express';
 import { diskStorage } from 'multer';
 import { extname, join } from 'path';
 import * as fs from 'fs';
+import * as crypto from 'crypto';
 import { ResponseMessage } from '../common/decorators/response-message.decorator';
+import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
+import { RolesGuard } from '../common/guards/roles.guard';
+import { Roles } from '../common/decorators/roles.decorator';
 
 // Ensure uploads directory exists
 const uploadsDir = join(process.cwd(), 'uploads');
@@ -19,19 +24,17 @@ if (!fs.existsSync(uploadsDir)) {
   fs.mkdirSync(uploadsDir, { recursive: true });
 }
 
+export const ALLOWED_EXTENSIONS = ['.jpg', '.jpeg', '.png', '.webp'];
+export const ALLOWED_MIME_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
+
 export const multerStorage = diskStorage({
   destination: (_req, _file, cb) => {
     cb(null, uploadsDir);
   },
   filename: (_req, file, cb) => {
-    // If originalname is already a timestamped upload filename, preserve it
-    if (/^\d+-\d+\.(jpe?g|png|webp|gif|svg)$/i.test(file.originalname)) {
-      cb(null, file.originalname);
-    } else {
-      const uniqueSuffix = `${Date.now()}-${Math.round(Math.random() * 1e9)}`;
-      const ext = extname(file.originalname).toLowerCase();
-      cb(null, `${uniqueSuffix}${ext}`);
-    }
+    const randomHex = crypto.randomBytes(8).toString('hex');
+    const ext = extname(file.originalname).toLowerCase();
+    cb(null, `${Date.now()}-${randomHex}${ext}`);
   },
 });
 
@@ -39,19 +42,36 @@ export const imageFileFilter = (
   _req: any,
   file: Express.Multer.File,
   cb: (error: Error | null, acceptFile: boolean) => void,
-  ) => {
-  if (!file.mimetype.match(/\/(jpg|jpeg|png|webp|gif|svg\+xml)$/)) {
+) => {
+  const ext = extname(file.originalname).toLowerCase();
+  const mime = (file.mimetype || '').toLowerCase();
+
+  // 1. Explicitly reject SVG to prevent Stored Cross-Site Scripting (XSS)
+  if (ext === '.svg' || mime.includes('svg')) {
     return cb(
       new BadRequestException(
-        'Only image files (jpg, jpeg, png, webp, gif, svg) are allowed!',
+        'SVG file uploads are rejected for security reasons (XSS vector prevention). Please upload JPG, PNG, or WebP images.',
       ),
       false,
     );
   }
+
+  // 2. Strict whitelist of safe raster image extensions and MIME types
+  if (!ALLOWED_EXTENSIONS.includes(ext) || !ALLOWED_MIME_TYPES.includes(mime)) {
+    return cb(
+      new BadRequestException(
+        'Invalid file type. Only secure JPG, PNG, and WebP images are permitted.',
+      ),
+      false,
+    );
+  }
+
   cb(null, true);
 };
 
 @Controller('upload')
+@UseGuards(JwtAuthGuard, RolesGuard)
+@Roles('admin')
 export class UploadController {
   @Post()
   @ResponseMessage('Image uploaded successfully')
@@ -60,7 +80,7 @@ export class UploadController {
       storage: multerStorage,
       fileFilter: imageFileFilter,
       limits: {
-        fileSize: 10 * 1024 * 1024, // 10MB maximum limit
+        fileSize: 5 * 1024 * 1024, // 5MB maximum limit per image
       },
     }),
   )
@@ -91,11 +111,12 @@ export class UploadController {
   @Post('multiple')
   @ResponseMessage('Images uploaded successfully')
   @UseInterceptors(
-    FilesInterceptor('files', 15, {
+    FilesInterceptor('files', 10, {
       storage: multerStorage,
       fileFilter: imageFileFilter,
       limits: {
-        fileSize: 10 * 1024 * 1024, // 10MB per file
+        fileSize: 5 * 1024 * 1024, // 5MB per file
+        files: 10,
       },
     }),
   )

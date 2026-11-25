@@ -3,19 +3,29 @@ import {
   NotFoundException,
   ConflictException,
   BadRequestException,
+  InternalServerErrorException,
+  Logger,
   OnModuleInit,
 } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import * as crypto from 'crypto';
 import * as nodemailer from 'nodemailer';
 import { Order, OrderDocument } from './schemas/order.schema';
 import { Product, ProductDocument } from '../products/schemas/product.schema';
-import { CreateOrderDto } from './dto/create-order.dto';
+import { CouponsService } from '../coupons/coupons.service';
+import {
+  CreateOrderDto,
+  CreateRazorpayOrderDto,
+  OrderItemDto,
+} from './dto/create-order.dto';
 import { UpdateOrderStatusDto } from './dto/update-order-status.dto';
+import { escapeRegex } from '../common/utils/regex.util';
 
 @Injectable()
 export class OrdersService implements OnModuleInit {
+  private readonly logger = new Logger(OrdersService.name);
   private razorpayInstance: any = null;
 
   constructor(
@@ -23,6 +33,8 @@ export class OrdersService implements OnModuleInit {
     private readonly orderModel: Model<OrderDocument>,
     @InjectModel(Product.name)
     private readonly productModel: Model<ProductDocument>,
+    private readonly couponsService: CouponsService,
+    private readonly configService: ConfigService,
   ) {}
 
   async onModuleInit() {
@@ -129,6 +141,140 @@ export class OrdersService implements OnModuleInit {
     }
   }
 
+  /**
+   * CANONICAL SERVER-SIDE PRICING ENGINE:
+   * Recalculates subtotal, discounts, GST tax, and totals
+   * by querying product documents directly from MongoDB.
+   * Completely immune to client-side price tampering.
+   */
+  async calculateOrderPricing(
+    items: OrderItemDto[],
+    couponCode?: string,
+  ): Promise<{
+    verifiedItems: any[];
+    subtotal: number;
+    discount: number;
+    couponCode: string;
+    tax: number;
+    shipping: number;
+    grandTotal: number;
+  }> {
+    if (!Array.isArray(items) || items.length === 0) {
+      throw new BadRequestException('Order must contain at least one item');
+    }
+
+    const verifiedItems: any[] = [];
+
+    for (const item of items) {
+      const cleanId = (item.id || '').trim();
+      const isObjectId = Types.ObjectId.isValid(cleanId);
+
+      const filter: any = isObjectId
+        ? {
+            $or: [
+              { _id: cleanId },
+              { customId: cleanId },
+              { sku: cleanId.toUpperCase() },
+            ],
+          }
+        : {
+            $or: [
+              { customId: cleanId },
+              { sku: cleanId.toUpperCase() },
+              { slug: cleanId.toLowerCase() },
+              ...(item.name ? [{ name: item.name }] : []),
+            ],
+          };
+
+      const product = await this.productModel.findOne(filter).exec();
+      if (!product) {
+        throw new NotFoundException(
+          `Product "${item.name || item.id}" was not found in catalog`,
+        );
+      }
+
+      if (product.status && product.status !== 'Active') {
+        throw new BadRequestException(
+          `Product "${product.name}" is currently unavailable for purchase`,
+        );
+      }
+
+      const qty = Math.max(1, Math.floor(Number(item.quantity) || 1));
+      const availableStock = Math.max(0, Number(product.stock) || 0);
+
+      if (availableStock < qty) {
+        throw new BadRequestException(
+          `Insufficient stock for "${product.name}". Only ${availableStock} units remaining.`,
+        );
+      }
+
+      // Canonical price directly from MongoDB document
+      const unitPrice = Number(product.price) || 0;
+      const customStitching = Boolean(item.customStitching);
+      const stitchingFee = customStitching ? 1200 : 0;
+      const itemGst = Math.round(((unitPrice + stitchingFee) * qty) * 0.05);
+
+      verifiedItems.push({
+        id: product._id.toString(),
+        name: product.name,
+        size: item.size || 'Standard',
+        quantity: qty,
+        price: unitPrice, // CANONICAL PRICE ENFORCED FROM DATABASE
+        image:
+          product.cardImage ||
+          product.coverImage ||
+          (product.images && product.images[0]) ||
+          item.image ||
+          '/images/hero-model.jpg',
+        customStitching,
+        stitchingFee,
+        gstRate: 5,
+        gstAmount: itemGst,
+      });
+    }
+
+    const subtotal = verifiedItems.reduce(
+      (sum, it) => sum + (it.price + (it.stitchingFee || 0)) * it.quantity,
+      0,
+    );
+
+    let discount = 0;
+    let validatedCouponCode = '';
+
+    if (couponCode && couponCode.trim()) {
+      const cleanCode = couponCode.trim().toUpperCase();
+      try {
+        const validation = await this.couponsService.validate({
+          code: cleanCode,
+          orderAmount: subtotal,
+        });
+        if (validation && validation.valid) {
+          discount = Math.min(Number(validation.discountAmount) || 0, subtotal);
+          validatedCouponCode = cleanCode;
+        }
+      } catch (couponErr: any) {
+        throw new BadRequestException(
+          `Invalid or expired coupon "${cleanCode}": ${couponErr?.message || 'Verification failed'}`,
+        );
+      }
+    }
+
+    const taxableAmount = Math.max(0, subtotal - discount);
+    const tax = Math.round(taxableAmount * 0.05); // 5% GST
+    const shipping = 0; // Complimentary Royal Free Shipping
+    const grandTotal = Math.max(0, taxableAmount + tax + shipping);
+
+    return {
+      verifiedItems,
+      subtotal,
+      discount,
+      couponCode: validatedCouponCode,
+      tax,
+      shipping,
+      grandTotal,
+    };
+  }
+
   async create(createOrderDto: CreateOrderDto, userEmail?: string): Promise<Order> {
     const orderId =
       createOrderDto.orderId ||
@@ -138,6 +284,12 @@ export class OrdersService implements OnModuleInit {
     if (existing) {
       throw new ConflictException(`Order with ID ${orderId} already exists`);
     }
+
+    // Server-side recalculate pricing for every order to ensure 100% price integrity
+    const pricing = await this.calculateOrderPricing(
+      createOrderDto.items,
+      createOrderDto.couponCode,
+    );
 
     const now = new Date();
     const formattedDate = now.toLocaleDateString('en-GB', {
@@ -152,100 +304,124 @@ export class OrdersService implements OnModuleInit {
       createOrderDto.paymentMethod?.toLowerCase().includes('cash');
 
     const isPaidOnline =
-      createOrderDto.paymentStatus === 'Paid' ||
-      (!isCod && Boolean(createOrderDto.razorpayPaymentId));
+      !isCod &&
+      Boolean(createOrderDto.razorpayPaymentId) &&
+      createOrderDto.paymentStatus === 'Paid';
 
     const defaultTimeline = [
       { status: 'Placed', date: nowTimeStr, done: true },
-      { status: 'Confirmed', date: isPaidOnline ? nowTimeStr : 'Pending', done: isPaidOnline },
+      { status: 'Confirmed', date: isPaidOnline ? nowTimeStr : (isCod ? nowTimeStr : 'Pending'), done: isPaidOnline || isCod },
       { status: 'Processing', date: 'Pending', done: false },
       { status: 'Shipped', date: 'Pending', done: false },
       { status: 'Delivered', date: 'Pending', done: false },
     ];
-
-    const subtotal = Number(createOrderDto.subtotal) || 0;
-    const discount = Number(createOrderDto.discount) || 0;
-    const shipping = Number(createOrderDto.shipping) || 0;
-    const tax = Number(createOrderDto.tax) || 0;
-    const computedTotal = Math.max(0, subtotal - discount + tax + shipping);
-
-    const calculatedGrandTotal =
-      typeof createOrderDto.grandTotal === 'number' && !isNaN(createOrderDto.grandTotal) && createOrderDto.grandTotal > 0
-        ? createOrderDto.grandTotal
-        : (createOrderDto as any).amount || (createOrderDto as any).total || computedTotal;
 
     const newOrder = new this.orderModel({
       ...createOrderDto,
       orderId,
       userEmail: userEmail || createOrderDto.customer.email.toLowerCase(),
       date: formattedDate,
-      amount: calculatedGrandTotal,
-      subtotal,
-      discount,
-      couponCode: createOrderDto.couponCode || '',
-      shipping,
-      tax,
-      grandTotal: calculatedGrandTotal,
+      items: pricing.verifiedItems,
+      amount: pricing.grandTotal,
+      subtotal: pricing.subtotal,
+      discount: pricing.discount,
+      couponCode: pricing.couponCode,
+      shipping: pricing.shipping,
+      tax: pricing.tax,
+      grandTotal: pricing.grandTotal,
       paymentMethod: createOrderDto.paymentMethod || 'Razorpay Online',
       transactionId:
         createOrderDto.transactionId ||
         createOrderDto.razorpayPaymentId ||
-        `RAZORPAY-${Date.now().toString().slice(-8)}`,
-      paymentStatus: createOrderDto.paymentStatus || 'Paid',
+        `TXN-${Date.now().toString().slice(-8)}`,
+      paymentStatus: isPaidOnline ? 'Paid' : (isCod ? 'Pending' : 'Pending'),
       razorpayOrderId: createOrderDto.razorpayOrderId || '',
       razorpayPaymentId: createOrderDto.razorpayPaymentId || '',
       razorpaySignature: createOrderDto.razorpaySignature || '',
-      orderStatus: 'Confirmed',
+      orderStatus: isPaidOnline ? 'Confirmed' : (isCod ? 'Confirmed' : 'Pending'),
       timeline: defaultTimeline,
     });
 
     const savedOrder = await newOrder.save();
 
-    // Real-Time Inventory Engine: Auto-decrement physical stock for each ordered creation
-    if (Array.isArray(createOrderDto.items)) {
-      for (const item of createOrderDto.items) {
-        try {
-          const qty = Math.max(1, Number(item.quantity) || 1);
-          const cleanId = (item.id || '').trim();
-          const isObjectId = Types.ObjectId.isValid(cleanId);
+    // Atomic Stock Decrement Engine: Prevents overselling & race conditions
+    const decrementedItems: { id: string; qty: number }[] = [];
+    try {
+      for (const item of pricing.verifiedItems) {
+        const qty = Math.max(1, Number(item.quantity) || 1);
+        const cleanId = (item.id || '').trim();
+        const isObjectId = Types.ObjectId.isValid(cleanId);
 
-          const filter: any = isObjectId
-            ? {
-                $or: [
-                  { _id: cleanId },
-                  { customId: cleanId },
-                  { sku: cleanId.toUpperCase() },
-                ],
-              }
-            : {
-                $or: [
-                  { customId: cleanId },
-                  { sku: cleanId.toUpperCase() },
-                  { slug: cleanId.toLowerCase() },
-                  ...(item.name ? [{ name: item.name }] : []),
-                ],
-              };
+        const filter: any = isObjectId
+          ? { _id: cleanId, stock: { $gte: qty } }
+          : {
+              $or: [
+                { customId: cleanId },
+                { sku: cleanId.toUpperCase() },
+              ],
+              stock: { $gte: qty },
+            };
 
-          const product = await this.productModel.findOne(filter);
-          if (product) {
-            const currentStock = Math.max(0, Number(product.stock) || 0);
-            const newStock = Math.max(0, currentStock - qty);
-            product.stock = newStock;
-            product.inStock = newStock > 0;
-            if (newStock === 0) {
-              product.status = 'Out of Stock';
-            }
-            await product.save();
-          }
-        } catch (stockErr) {
-          console.warn(`Failed to decrement stock for item ${item.id}:`, stockErr.message);
+        const updatedProduct = await this.productModel.findOneAndUpdate(
+          filter,
+          { $inc: { stock: -qty } },
+          { new: true },
+        );
+
+        if (!updatedProduct) {
+          throw new ConflictException(
+            `Creation "${item.name}" ran out of available stock while finalizing your order. Please adjust your bag.`,
+          );
         }
+
+        decrementedItems.push({ id: cleanId, qty });
+
+        if (updatedProduct.stock <= 0) {
+          await this.productModel.updateOne(
+            { _id: updatedProduct._id },
+            { $set: { inStock: false, status: 'Out of Stock' } },
+          );
+        }
+      }
+    } catch (stockErr: any) {
+      // Rollback any items that were decremented in this failed order attempt
+      for (const dec of decrementedItems) {
+        try {
+          const isObjectId = Types.ObjectId.isValid(dec.id);
+          const rollbackFilter: any = isObjectId
+            ? { _id: dec.id }
+            : { $or: [{ customId: dec.id }, { sku: dec.id.toUpperCase() }] };
+          await this.productModel.updateOne(rollbackFilter, {
+            $inc: { stock: dec.qty },
+            $set: { inStock: true, status: 'Active' },
+          });
+        } catch (rbErr: any) {
+          console.error(
+            `[Inventory Rollback Error] Failed to restore stock for item ${dec.id}:`,
+            rbErr?.message,
+          );
+        }
+      }
+      throw stockErr;
+    }
+
+    // Record Coupon Usage
+    if (pricing.couponCode) {
+      try {
+        await this.couponsService.recordUsage(pricing.couponCode);
+      } catch (cpnErr: any) {
+        console.warn('[Coupons] Failed to record usage:', cpnErr?.message);
       }
     }
 
-    // Asynchronously dispatch royal order notification email to Admin and Customer
-    this.sendOrderNotificationEmails(savedOrder).catch((mailErr) => {
-      console.warn('[OrdersService] Asynchronous order notification email failed:', mailErr?.message || mailErr);
+    // Offload email dispatch to non-blocking background task via setImmediate
+    setImmediate(() => {
+      this.sendOrderNotificationEmails(savedOrder).catch((mailErr) => {
+        this.logger.warn(
+          '[OrdersService] Background order notification email failed: ' +
+            (mailErr?.message || mailErr),
+        );
+      });
     });
 
     return savedOrder;
@@ -273,7 +449,7 @@ export class OrdersService implements OnModuleInit {
     }
 
     if (query.search && query.search.trim()) {
-      const s = query.search.trim();
+      const s = escapeRegex(query.search.trim());
       filter.$or = [
         { orderId: { $regex: s, $options: 'i' } },
         { 'customer.name': { $regex: s, $options: 'i' } },
@@ -319,11 +495,15 @@ export class OrdersService implements OnModuleInit {
   }
 
   async findByUser(email: string): Promise<Order[]> {
+    const cleanEmail = (email || '').trim().toLowerCase();
+    if (!cleanEmail) {
+      return [];
+    }
     return this.orderModel
       .find({
         $or: [
-          { userEmail: email.toLowerCase() },
-          { 'customer.email': email.toLowerCase() },
+          { userEmail: cleanEmail },
+          { 'customer.email': cleanEmail },
         ],
       })
       .sort({ createdAt: -1 })
@@ -392,8 +572,13 @@ export class OrdersService implements OnModuleInit {
 
   private getRazorpay(): any {
     if (!this.razorpayInstance) {
-      const key_id = process.env.RAZORPAY_KEY_ID || 'rzp_live_Tqs7ZkrK4xTtmd';
-      const key_secret = process.env.RAZORPAY_KEY_SECRET || 'IvXxbgV1q03F70WrTed1eQrH';
+      const key_id = this.configService.get<string>('RAZORPAY_KEY_ID');
+      const key_secret = this.configService.get<string>('RAZORPAY_KEY_SECRET');
+      if (!key_id || !key_secret) {
+        throw new InternalServerErrorException(
+          'Razorpay payment gateway credentials are not configured on server',
+        );
+      }
       const Razorpay = require('razorpay');
       this.razorpayInstance = new Razorpay({
         key_id,
@@ -405,22 +590,40 @@ export class OrdersService implements OnModuleInit {
 
   getRazorpayKey(): { keyId: string } {
     return {
-      keyId: process.env.RAZORPAY_KEY_ID || 'rzp_live_Tqs7ZkrK4xTtmd',
+      keyId: this.configService.get<string>('RAZORPAY_KEY_ID') || '',
     };
   }
 
-  async createRazorpayOrder(amount: number, receipt?: string) {
-    if (!amount || Number(amount) <= 0) {
+  async createRazorpayOrder(body: {
+    amount?: number;
+    items?: OrderItemDto[];
+    couponCode?: string;
+    receipt?: string;
+  }) {
+    let payableAmount = 0;
+    let serverCalculated: any = null;
+
+    if (Array.isArray(body.items) && body.items.length > 0) {
+      const pricing = await this.calculateOrderPricing(body.items, body.couponCode);
+      payableAmount = pricing.grandTotal;
+      serverCalculated = pricing;
+    } else if (body.amount && Number(body.amount) > 0) {
+      payableAmount = Number(body.amount);
+    } else {
+      throw new BadRequestException('Order items are required to initialize secure checkout');
+    }
+
+    if (payableAmount <= 0) {
       throw new BadRequestException('Payable amount must be greater than zero');
     }
 
     const razorpay = this.getRazorpay();
-    const amountInPaise = Math.round(Number(amount) * 100);
+    const amountInPaise = Math.round(payableAmount * 100);
 
     const options = {
       amount: amountInPaise,
       currency: 'INR',
-      receipt: receipt || `rcpt_${Date.now().toString().slice(-8)}`,
+      receipt: body.receipt || `rcpt_${Date.now().toString().slice(-8)}`,
       payment_capture: 1,
     };
 
@@ -431,7 +634,8 @@ export class OrdersService implements OnModuleInit {
         amount: order.amount,
         currency: order.currency,
         receipt: order.receipt,
-        keyId: process.env.RAZORPAY_KEY_ID || 'rzp_live_Tqs7ZkrK4xTtmd',
+        keyId: this.getRazorpayKey().keyId,
+        serverCalculated,
       };
     } catch (err: any) {
       console.error('Razorpay order creation error:', err);
@@ -461,11 +665,17 @@ export class OrdersService implements OnModuleInit {
       throw new BadRequestException('Incomplete payment verification payload');
     }
 
-    if (!orderPayload) {
-      throw new BadRequestException('Order payload is required to finalize order');
+    if (!orderPayload || !Array.isArray(orderPayload.items)) {
+      throw new BadRequestException('Order payload with items is required to finalize order');
     }
 
-    const secret = process.env.RAZORPAY_KEY_SECRET || 'IvXxbgV1q03F70WrTed1eQrH';
+    // 1. Cryptographic HMAC-SHA256 signature verification
+    const secret = this.configService.get<string>('RAZORPAY_KEY_SECRET');
+    if (!secret) {
+      throw new InternalServerErrorException(
+        'Razorpay payment gateway credentials not configured on server',
+      );
+    }
     const text = `${razorpayOrderId}|${razorpayPaymentId}`;
     const generatedSignature = crypto
       .createHmac('sha256', secret)
@@ -476,21 +686,64 @@ export class OrdersService implements OnModuleInit {
       throw new BadRequestException('Invalid payment signature. Verification failed.');
     }
 
-    const subtotal = Number(orderPayload.subtotal) || 0;
-    const discount = Number(orderPayload.discount) || 0;
-    const shipping = Number(orderPayload.shipping) || 0;
-    const tax = Number(orderPayload.tax) || 0;
-    const fallbackTotal = Math.max(0, subtotal - discount + tax + shipping);
+    // 2. Replay attack protection: Ensure payment ID hasn't been used previously
+    const existingOrderWithPayment = await this.orderModel
+      .findOne({ razorpayPaymentId })
+      .exec();
+    if (existingOrderWithPayment) {
+      throw new ConflictException(
+        `Payment ${razorpayPaymentId} has already been fulfilled for Order #${existingOrderWithPayment.orderId}.`,
+      );
+    }
 
-    const grandTotal =
-      typeof orderPayload.grandTotal === 'number' && !isNaN(orderPayload.grandTotal) && orderPayload.grandTotal > 0
-        ? orderPayload.grandTotal
-        : (orderPayload as any).amount || (orderPayload as any).total || fallbackTotal;
+    // 3. Fetch transaction from Razorpay API to verify status and exact captured paise
+    let capturedPaise = 0;
+    try {
+      const razorpay = this.getRazorpay();
+      const rzpPayment = await razorpay.payments.fetch(razorpayPaymentId);
+      if (rzpPayment) {
+        if (rzpPayment.order_id && rzpPayment.order_id !== razorpayOrderId) {
+          throw new BadRequestException('Razorpay order ID mismatch in gateway record.');
+        }
+        if (rzpPayment.status !== 'captured' && rzpPayment.status !== 'authorized') {
+          throw new BadRequestException(
+            `Payment is in '${rzpPayment.status}' state and not captured.`,
+          );
+        }
+        capturedPaise = Number(rzpPayment.amount) || 0;
+      }
+    } catch (rzpFetchErr: any) {
+      console.warn('[Razorpay API verify warning]:', rzpFetchErr?.message || rzpFetchErr);
+      if (rzpFetchErr instanceof BadRequestException) {
+        throw rzpFetchErr;
+      }
+    }
 
-    // Populate verified payment metadata on order
+    // 4. Server-Side Canonical Recalculation
+    const pricing = await this.calculateOrderPricing(
+      orderPayload.items,
+      orderPayload.couponCode,
+    );
+
+    const expectedPaise = Math.round(pricing.grandTotal * 100);
+
+    // Verify paid amount matches server calculation (allowing max ₹1 rounding margin)
+    if (capturedPaise > 0 && Math.abs(capturedPaise - expectedPaise) > 100) {
+      throw new BadRequestException(
+        `Price Tampering Detected: Captured amount (₹${capturedPaise / 100}) does not match server-verified order total (₹${pricing.grandTotal}). Order rejected.`,
+      );
+    }
+
+    // 5. Populate verified payment & canonical numbers
     const verifiedOrderPayload: CreateOrderDto = {
       ...orderPayload,
-      grandTotal,
+      items: pricing.verifiedItems,
+      subtotal: pricing.subtotal,
+      discount: pricing.discount,
+      couponCode: pricing.couponCode,
+      shipping: pricing.shipping,
+      tax: pricing.tax,
+      grandTotal: pricing.grandTotal,
       paymentMethod: orderPayload.paymentMethod || 'Razorpay / Online',
       transactionId: razorpayPaymentId,
       paymentStatus: 'Paid',
@@ -506,10 +759,15 @@ export class OrdersService implements OnModuleInit {
    * Configures Nodemailer transporter using active SMTP credentials
    */
   private getMailTransporter() {
-    const host = process.env.EMAIL_HOST || 'smtp.gmail.com';
-    const port = Number(process.env.EMAIL_PORT) || 587;
-    const user = process.env.EMAIL_USER || 'ravi182036@gmail.com';
-    const pass = process.env.EMAIL_PASS || 'qppdwgxuauxkrfxw';
+    const host = this.configService.get<string>('EMAIL_HOST', 'smtp.gmail.com');
+    const port = Number(this.configService.get<number>('EMAIL_PORT', 587));
+    const user = this.configService.get<string>('EMAIL_USER');
+    const rawPass = this.configService.get<string>('EMAIL_PASS');
+    const pass = (rawPass || '').replace(/\s+/g, '');
+
+    if (!user || !pass) {
+      return null;
+    }
 
     const isGmail =
       host.toLowerCase().includes('gmail') ||
@@ -540,23 +798,38 @@ export class OrdersService implements OnModuleInit {
   async sendOrderNotificationEmails(order: any) {
     try {
       const transporter = this.getMailTransporter();
-      const mailFrom = process.env.MAIL_FROM || process.env.EMAIL_USER || 'ravi182036@gmail.com';
-      const clientUrl = process.env.CLIENT_URL || process.env.FRONTEND_URL || 'https://www.saisaa.com';
+      if (!transporter) {
+        this.logger.warn(
+          '[OrdersService] SMTP credentials not configured. Skipping order notification email dispatch.',
+        );
+        return;
+      }
+      const mailFrom =
+        this.configService.get<string>('MAIL_FROM') ||
+        this.configService.get<string>('EMAIL_USER') ||
+        '"SAISAA Atelier" <orders@saisaa.com>';
+      const clientUrl =
+        this.configService.get<string>('CLIENT_URL') ||
+        this.configService.get<string>('FRONTEND_URL') ||
+        'https://www.saisaa.com';
       const adminOrdersUrl = `${clientUrl}/admin/orders`;
 
       // 1. Gather all admin receiver emails
       const adminRecipients: string[] = [];
-      if (process.env.ADMIN_EMAIL) {
-        adminRecipients.push(process.env.ADMIN_EMAIL.trim());
+      const adminEmail = this.configService.get<string>('ADMIN_EMAIL');
+      if (adminEmail) {
+        adminRecipients.push(adminEmail.trim());
       }
+      const contactReceiver =
+        this.configService.get<string>('CONTACT_RECEIVER_EMAIL');
       if (
-        process.env.CONTACT_RECEIVER_EMAIL &&
-        !adminRecipients.includes(process.env.CONTACT_RECEIVER_EMAIL.trim())
+        contactReceiver &&
+        !adminRecipients.includes(contactReceiver.trim())
       ) {
-        adminRecipients.push(process.env.CONTACT_RECEIVER_EMAIL.trim());
+        adminRecipients.push(contactReceiver.trim());
       }
-      if (adminRecipients.length === 0) {
-        adminRecipients.push('Saisaa@gmail.com');
+      if (adminRecipients.length === 0 && adminEmail) {
+        adminRecipients.push(adminEmail);
       }
 
       // Generate HTML items list

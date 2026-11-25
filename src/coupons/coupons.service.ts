@@ -157,8 +157,37 @@ export class CouponsService implements OnModuleInit {
       throw new BadRequestException('Invalid or inactive royal promo code');
     }
 
-    if (coupon.usageLimit && coupon.usedCount >= coupon.usageLimit) {
-      throw new BadRequestException('This coupon usage limit has been reached');
+    // 1. Expiry Date Validation (validUntil)
+    if (coupon.validUntil) {
+      const expiryDate = new Date(coupon.validUntil);
+      if (!isNaN(expiryDate.getTime())) {
+        expiryDate.setHours(23, 59, 59, 999);
+        if (new Date() > expiryDate) {
+          throw new BadRequestException(
+            `Promo code "${coupon.code}" has expired on ${coupon.validUntil}`,
+          );
+        }
+      }
+    }
+
+    // 2. Activation Date Validation (validFrom)
+    if (coupon.validFrom && coupon.validFrom.toLowerCase() !== 'today') {
+      const startDate = new Date(coupon.validFrom);
+      if (!isNaN(startDate.getTime())) {
+        startDate.setHours(0, 0, 0, 0);
+        if (new Date() < startDate) {
+          throw new BadRequestException(
+            `Promo code "${coupon.code}" is not active until ${coupon.validFrom}`,
+          );
+        }
+      }
+    }
+
+    // 3. Usage Limit Validation (usageLimit)
+    if (coupon.usageLimit && coupon.usageLimit > 0 && coupon.usedCount >= coupon.usageLimit) {
+      throw new BadRequestException(
+        `Promo code "${coupon.code}" usage limit has been exhausted`,
+      );
     }
 
     const orderAmount = Number(dto.orderAmount) || 0;
@@ -202,9 +231,27 @@ export class CouponsService implements OnModuleInit {
 
   async recordUsage(code: string) {
     const cleanCode = code.trim().toUpperCase();
-    await this.couponModel.updateOne(
-      { code: cleanCode },
+    const updated = await this.couponModel.findOneAndUpdate(
+      {
+        code: cleanCode,
+        $or: [
+          { usageLimit: { $exists: false } },
+          { usageLimit: null },
+          { usageLimit: 0 },
+          { $expr: { $lt: ['$usedCount', '$usageLimit'] } },
+        ],
+      },
       { $inc: { usedCount: 1 } },
+      { new: true },
     );
+
+    if (updated && updated.usageLimit && updated.usedCount >= updated.usageLimit) {
+      await this.couponModel.updateOne(
+        { _id: updated._id },
+        { $set: { status: 'Exhausted' } },
+      );
+    }
+
+    return updated;
   }
 }

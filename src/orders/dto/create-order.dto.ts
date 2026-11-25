@@ -148,3 +148,24 @@ export class CreateOrderDto {
   @IsOptional()
   notes?: string;
 }
+
+export class CreateRazorpayOrderDto {
+  @IsArray()
+  @IsOptional()
+  @ValidateNested({ each: true })
+  @Type(() => OrderItemDto)
+  items?: OrderItemDto[];
+
+  @IsString()
+  @IsOptional()
+  couponCode?: string;
+
+  @IsNumber()
+  @IsOptional()
+  amount?: number;
+
+  @IsString()
+  @IsOptional()
+  receipt?: string;
+}
+

@@ -7,12 +7,16 @@ import {
   Body,
   Param,
   Query,
+  UseGuards,
 } from '@nestjs/common';
 import { CategoriesService } from './categories.service';
 import { CreateCategoryDto } from './dto/create-category.dto';
 import { UpdateCategoryDto } from './dto/update-category.dto';
 import { SubCategoryDto } from './dto/sub-category.dto';
 import { ResponseMessage } from '../common/decorators/response-message.decorator';
+import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
+import { RolesGuard } from '../common/guards/roles.guard';
+import { Roles } from '../common/decorators/roles.decorator';
 
 @Controller('categories')
 export class CategoriesController {
@@ -31,12 +35,16 @@ export class CategoriesController {
   }
 
   @Post()
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('admin')
   @ResponseMessage('Category created successfully')
   async create(@Body() createCategoryDto: CreateCategoryDto) {
     return this.categoriesService.create(createCategoryDto);
   }
 
   @Put(':id')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('admin')
   @ResponseMessage('Category updated successfully')
   async update(
     @Param('id') id: string,
@@ -46,12 +54,16 @@ export class CategoriesController {
   }
 
   @Delete(':id')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('admin')
   @ResponseMessage('Category deleted successfully')
   async remove(@Param('id') id: string) {
     return this.categoriesService.remove(id);
   }
 
   @Post(':idOrSlug/subcategories')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('admin')
   @ResponseMessage('Subcategory added successfully')
   async addSubCategory(
     @Param('idOrSlug') idOrSlug: string,
@@ -61,6 +73,8 @@ export class CategoriesController {
   }
 
   @Delete(':idOrSlug/subcategories/:name')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('admin')
   @ResponseMessage('Subcategory removed successfully')
   async removeSubCategory(
     @Param('idOrSlug') idOrSlug: string,

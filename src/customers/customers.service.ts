@@ -5,6 +5,7 @@ import * as bcrypt from 'bcryptjs';
 import { User, UserDocument } from '../auth/schemas/user.schema';
 import { Order, OrderDocument } from '../orders/schemas/order.schema';
 import { UpdateCustomerDto } from './dto/update-customer.dto';
+import { escapeRegex } from '../common/utils/regex.util';
 
 @Injectable()
 export class CustomersService implements OnModuleInit {
@@ -120,72 +121,175 @@ export class CustomersService implements OnModuleInit {
   }
 
   async findAll(query: any = {}) {
-    const filter: any = {};
+    const matchFilter: any = {};
     if (query.status && query.status !== 'all') {
-      filter.status = query.status;
+      matchFilter.status = query.status;
+    }
+    if (query.role) {
+      matchFilter.role = query.role;
     }
 
-    const users = await this.userModel.find(filter).sort({ createdAt: -1 }).exec();
+    if (query.search && query.search.trim()) {
+      const sanitized = escapeRegex(query.search.trim());
+      matchFilter.$or = [
+        { fullName: { $regex: sanitized, $options: 'i' } },
+        { email: { $regex: sanitized, $options: 'i' } },
+        { phone: { $regex: sanitized, $options: 'i' } },
+        { customId: { $regex: sanitized, $options: 'i' } },
+      ];
+    }
 
-    // Enrich each user with real orders count and spending from orders collection
-    const enriched = await Promise.all(
-      users.map(async (u) => {
-        const userEmail = u.email.toLowerCase().trim();
-        const userOrders = await this.orderModel
-          .find({
-            $or: [
-              { 'customer.email': userEmail },
-              { 'customer.name': { $regex: new RegExp(`^${u.fullName}$`, 'i') } },
+    const page = Math.max(1, parseInt(query.page, 10) || 1);
+    const limit = query.limit
+      ? Math.max(1, Math.min(200, parseInt(query.limit, 10)))
+      : 100;
+    const skip = (page - 1) * limit;
+
+    // High-Performance Single MongoDB Aggregation Pipeline
+    // Eliminates the N+1 database loop and unindexed regex table scans completely
+    const pipeline: any[] = [
+      { $match: matchFilter },
+      { $sort: { createdAt: -1 } },
+      { $skip: skip },
+      { $limit: limit },
+      {
+        $lookup: {
+          from: 'orders',
+          let: { userEmail: { $toLower: { $trim: { input: '$email' } } } },
+          pipeline: [
+            {
+              $match: {
+                $expr: {
+                  $or: [
+                    { $eq: [{ $toLower: '$customer.email' }, '$$userEmail'] },
+                    { $eq: [{ $toLower: '$userEmail' }, '$$userEmail'] },
+                  ],
+                },
+              },
+            },
+            {
+              $project: {
+                grandTotal: 1,
+                amount: 1,
+                'customer.phone': 1,
+                'customer.address': 1,
+                createdAt: 1,
+              },
+            },
+            { $sort: { createdAt: -1 } },
+          ],
+          as: 'userOrders',
+        },
+      },
+      {
+        $project: {
+          id: { $ifNull: ['$customId', { $toString: '$_id' }] },
+          _id: { $toString: '$_id' },
+          customId: '$customId',
+          name: '$fullName',
+          fullName: '$fullName',
+          email: '$email',
+          phone: {
+            $ifNull: [
+              '$phone',
+              {
+                $ifNull: [
+                  { $arrayElemAt: ['$userOrders.customer.phone', 0] },
+                  '+91 88149 30229',
+                ],
+              },
             ],
+          },
+          orders: { $size: '$userOrders' },
+          totalSpent: {
+            $round: [
+              {
+                $sum: {
+                  $map: {
+                    input: '$userOrders',
+                    as: 'ord',
+                    in: {
+                      $ifNull: [
+                        '$$ord.grandTotal',
+                        { $ifNull: ['$$ord.amount', 0] },
+                      ],
+                    },
+                  },
+                },
+              },
+              0,
+            ],
+          },
+          status: { $ifNull: ['$status', 'Active'] },
+          tier: { $ifNull: ['$tier', 'Royal Privé Member'] },
+          loyaltyPoints: { $ifNull: ['$loyaltyPoints', 500] },
+          avatar: {
+            $ifNull: [
+              '$avatar',
+              'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=100&auto=format&fit=crop&q=80',
+            ],
+          },
+          addresses: {
+            $cond: {
+              if: { $gt: [{ $size: { $ifNull: ['$addresses', []] } }, 0] },
+              then: '$addresses',
+              else: {
+                $cond: {
+                  if: {
+                    $ne: [
+                      {
+                        $ifNull: [
+                          { $arrayElemAt: ['$userOrders.customer.address', 0] },
+                          '',
+                        ],
+                      },
+                      '',
+                    ],
+                  },
+                  then: [
+                    {
+                      type: 'Primary Delivery',
+                      line: {
+                        $arrayElemAt: ['$userOrders.customer.address', 0],
+                      },
+                      isDefault: true,
+                    },
+                  ],
+                  else: [],
+                },
+              },
+            },
+          },
+          notes: { $ifNull: ['$notes', ''] },
+          createdAt: '$createdAt',
+        },
+      },
+    ];
+
+    const results = await this.userModel.aggregate(pipeline).exec();
+
+    return results.map((item: any) => {
+      const joinedDate = item.createdAt
+        ? new Date(item.createdAt).toLocaleDateString('en-GB', {
+            day: '2-digit',
+            month: 'short',
+            year: 'numeric',
           })
-          .sort({ createdAt: -1 })
-          .exec();
+        : 'Recent';
 
-        const orderCount = userOrders.length;
-        const totalSpent = userOrders.reduce(
-          (sum, o) => sum + (Number(o.grandTotal) || Number(o.amount) || 0),
-          0,
-        );
+      const totalSpent = Number(item.totalSpent) || 0;
+      const status = item.status || (totalSpent > 50000 ? 'VIP' : 'Active');
+      const tier =
+        item.tier ||
+        (totalSpent > 50000 ? 'Royal Connoisseur' : 'Royal Privé Member');
 
-        const latestOrder = userOrders[0];
-        const joinedDate = u.createdAt
-          ? new Date(u.createdAt).toLocaleDateString('en-GB', {
-              day: '2-digit',
-              month: 'short',
-              year: 'numeric',
-            })
-          : 'Recent';
-
-        return {
-          id: u.customId || u._id.toString(),
-          _id: u._id.toString(),
-          customId: u.customId,
-          name: u.fullName,
-          fullName: u.fullName,
-          email: u.email,
-          phone: u.phone || latestOrder?.customer?.phone || '+91 88149 30229',
-          orders: orderCount,
-          totalSpent,
-          joined: joinedDate,
-          status: u.status || (totalSpent > 50000 ? 'VIP' : 'Active'),
-          tier: u.tier || (totalSpent > 50000 ? 'Royal Connoisseur' : 'Royal Privé Member'),
-          loyaltyPoints: u.loyaltyPoints ?? 500,
-          avatar:
-            u.avatar ||
-            'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=100&auto=format&fit=crop&q=80',
-          addresses:
-            u.addresses && u.addresses.length > 0
-              ? u.addresses
-              : latestOrder?.customer?.address
-              ? [{ type: 'Primary Delivery', line: latestOrder.customer.address, isDefault: true }]
-              : [],
-          notes: u.notes || '',
-          createdAt: u.createdAt,
-        };
-      }),
-    );
-
-    return enriched;
+      return {
+        ...item,
+        joined: joinedDate,
+        status,
+        tier,
+      };
+    });
   }
 
   async findOne(idOrEmail: string) {
@@ -204,12 +308,12 @@ export class CustomersService implements OnModuleInit {
       throw new NotFoundException(`Customer "${idOrEmail}" not found`);
     }
 
-    const userEmail = user.email.toLowerCase().trim();
+    const cleanEmail = user.email.toLowerCase().trim();
     const customerOrders = await this.orderModel
       .find({
         $or: [
-          { 'customer.email': userEmail },
-          { 'customer.name': { $regex: new RegExp(`^${user.fullName}$`, 'i') } },
+          { 'customer.email': cleanEmail },
+          { userEmail: cleanEmail },
         ],
       })
       .sort({ createdAt: -1 })

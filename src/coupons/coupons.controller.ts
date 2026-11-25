@@ -6,13 +6,20 @@ import {
   Param,
   Body,
   Query,
+  UseGuards,
 } from '@nestjs/common';
 import { CouponsService } from './coupons.service';
 import { CreateCouponDto } from './dto/create-coupon.dto';
 import { ValidateCouponDto } from './dto/validate-coupon.dto';
 import { ResponseMessage } from '../common/decorators/response-message.decorator';
+import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
+import { RolesGuard } from '../common/guards/roles.guard';
+import { Roles } from '../common/decorators/roles.decorator';
+import { Public } from '../common/decorators/public.decorator';
 
 @Controller('coupons')
+@UseGuards(JwtAuthGuard, RolesGuard)
+@Roles('admin')
 export class CouponsController {
   constructor(private readonly couponsService: CouponsService) {}
 
@@ -22,6 +29,7 @@ export class CouponsController {
     return this.couponsService.findAll(query);
   }
 
+  @Public()
   @Post('validate')
   @ResponseMessage('Coupon validated successfully')
   async validate(@Body() validateCouponDto: ValidateCouponDto) {

@@ -9,12 +9,14 @@ import { Model } from 'mongoose';
 import { Category, CategoryDocument } from './schemas/category.schema';
 import { CreateCategoryDto } from './dto/create-category.dto';
 import { UpdateCategoryDto } from './dto/update-category.dto';
+import { CacheService } from '../common/cache/cache.service';
 
 @Injectable()
 export class CategoriesService implements OnModuleInit {
   constructor(
     @InjectModel(Category.name)
     private readonly categoryModel: Model<CategoryDocument>,
+    private readonly cacheService: CacheService,
   ) {}
 
   async onModuleInit() {
@@ -78,8 +80,20 @@ export class CategoriesService implements OnModuleInit {
   }
 
   async findAll(status?: string): Promise<Category[]> {
+    const cacheKey = `categories_${status || 'all'}`;
+    const cached = this.cacheService.get<Category[]>(cacheKey);
+    if (cached) {
+      return cached;
+    }
+
     const filter = status ? { status } : {};
-    return this.categoryModel.find(filter).sort({ createdAt: 1 }).exec();
+    const categories = await this.categoryModel
+      .find(filter)
+      .sort({ createdAt: 1 })
+      .exec();
+
+    this.cacheService.set(cacheKey, categories, 120); // 2 minutes TTL
+    return categories;
   }
 
   async findOne(idOrSlug: string): Promise<Category> {
@@ -117,7 +131,9 @@ export class CategoriesService implements OnModuleInit {
       slug,
       subCategories: createCategoryDto.subCategories || [],
     });
-    return created.save();
+    const saved = await created.save();
+    this.cacheService.del('categories*');
+    return saved;
   }
 
   async update(
@@ -146,6 +162,8 @@ export class CategoriesService implements OnModuleInit {
     if (!updated) {
       throw new NotFoundException(`Category not found`);
     }
+
+    this.cacheService.del('categories*');
     return updated;
   }
 
@@ -154,6 +172,8 @@ export class CategoriesService implements OnModuleInit {
     if (!deleted) {
       throw new NotFoundException(`Category not found`);
     }
+
+    this.cacheService.del('categories*');
     return { success: true };
   }
 

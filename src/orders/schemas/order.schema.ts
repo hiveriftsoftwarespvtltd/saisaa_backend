@@ -176,3 +176,10 @@ export class Order extends BaseDocument {
 }
 
 export const OrderSchema = SchemaFactory.createForClass(Order);
+
+// Optimized compound and field indexes for lightning-fast customer order aggregation
+OrderSchema.index({ 'customer.email': 1 });
+OrderSchema.index({ userEmail: 1 });
+OrderSchema.index({ 'customer.email': 1, createdAt: -1 });
+OrderSchema.index({ userEmail: 1, createdAt: -1 });
+

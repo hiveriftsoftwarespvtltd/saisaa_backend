@@ -4,6 +4,7 @@ import {
   UnauthorizedException,
   BadRequestException,
   Logger,
+  OnModuleInit,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
@@ -18,7 +19,7 @@ import { ForgotPasswordDto } from './dto/forgot-password.dto';
 import { ResetPasswordDto } from './dto/reset-password.dto';
 
 @Injectable()
-export class AuthService {
+export class AuthService implements OnModuleInit {
   private readonly logger = new Logger(AuthService.name);
 
   constructor(
@@ -26,6 +27,41 @@ export class AuthService {
     private readonly jwtService: JwtService,
     private readonly configService: ConfigService,
   ) {}
+
+  async onModuleInit() {
+    await this.seedAdminUser();
+  }
+
+  private async seedAdminUser() {
+    const adminEmail = (
+      this.configService.get<string>('ADMIN_EMAIL') || 'admin@saisaa.in'
+    ).trim().toLowerCase();
+    const adminPassword =
+      this.configService.get<string>('ADMIN_PASSWORD');
+
+    if (!adminPassword) {
+      this.logger.warn('[AuthService] ADMIN_PASSWORD environment variable not set. Default admin user seed skipped.');
+      return;
+    }
+
+    const existingAdmin = await this.userModel.findOne({
+      $or: [{ email: adminEmail }, { role: 'admin' }],
+    });
+
+    if (!existingAdmin) {
+      const hashedPassword = await bcrypt.hash(adminPassword, 10);
+      await this.userModel.create({
+        fullName: 'SAISAA Administrator',
+        email: adminEmail,
+        password: hashedPassword,
+        role: 'admin',
+        tier: 'Royal Atelier Administrator',
+        status: 'Active',
+        loyaltyPoints: 10000,
+      });
+      this.logger.log(`[AuthService] Seeded default administrator account: ${adminEmail}`);
+    }
+  }
 
   async register(registerDto: RegisterDto) {
     const { fullName, email, password } = registerDto;
@@ -201,16 +237,30 @@ export class AuthService {
     };
   }
 
+  async getProfile(userId: string) {
+    const user = await this.userModel.findById(userId).select('-password').exec();
+    if (!user) {
+      throw new UnauthorizedException('User account no longer exists');
+    }
+    return user;
+  }
+
   /**
    * Dispatch Royal Luxury HTML Email
    */
   private async sendResetPasswordEmail(toEmail: string, patronName: string, otp: string) {
     const host = this.configService.get<string>('EMAIL_HOST', 'smtp.gmail.com');
     const port = Number(this.configService.get<number>('EMAIL_PORT', 587));
-    const user = this.configService.get<string>('EMAIL_USER', 'samunder2611@gmail.com');
-    const rawPass = this.configService.get<string>('EMAIL_PASS', 'mduyjcgftdzqkrvg');
+    const user = this.configService.get<string>('EMAIL_USER');
+    const rawPass = this.configService.get<string>('EMAIL_PASS');
     const pass = (rawPass || '').replace(/\s+/g, '');
-    const mailFrom = `"SAISAA Concierge" <${user}>`;
+
+    if (!user || !pass) {
+      this.logger.warn(`[AuthService] EMAIL_USER or EMAIL_PASS not configured. Cannot send password reset OTP to ${toEmail}`);
+      return;
+    }
+
+    const mailFrom = this.configService.get<string>('MAIL_FROM') || `"SAISAA Concierge" <${user}>`;
 
     const isGmail =
       host.toLowerCase().includes('gmail') ||

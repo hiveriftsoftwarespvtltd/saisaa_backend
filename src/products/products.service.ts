@@ -9,12 +9,15 @@ import { Model } from 'mongoose';
 import { Product, ProductDocument } from './schemas/product.schema';
 import { CreateProductDto } from './dto/create-product.dto';
 import { UpdateProductDto } from './dto/update-product.dto';
+import { CacheService } from '../common/cache/cache.service';
+import { escapeRegex } from '../common/utils/regex.util';
 
 @Injectable()
 export class ProductsService implements OnModuleInit {
   constructor(
     @InjectModel(Product.name)
     private readonly productModel: Model<ProductDocument>,
+    private readonly cacheService: CacheService,
   ) {}
 
   async onModuleInit() {
@@ -384,6 +387,18 @@ export class ProductsService implements OnModuleInit {
     limit: number;
     pages: number;
   }> {
+    const cacheKey = `products_${JSON.stringify(query)}`;
+    const cached = this.cacheService.get<{
+      items: Product[];
+      total: number;
+      page: number;
+      limit: number;
+      pages: number;
+    }>(cacheKey);
+    if (cached) {
+      return cached;
+    }
+
     const filter: any = {};
 
     if (query.status) {
@@ -403,7 +418,7 @@ export class ProductsService implements OnModuleInit {
       } else if (cleanCat.includes('kurti')) {
         filter.category = { $regex: /kurti/i };
       } else {
-        const escaped = query.category.trim().replace(/[-_]/g, '[-\\s_]?');
+        const escaped = escapeRegex(query.category.trim()).replace(/[-_]/g, '[-\\s_]?');
         filter.category = { $regex: new RegExp(`^${escaped}$`, 'i') };
       }
     }
@@ -413,7 +428,8 @@ export class ProductsService implements OnModuleInit {
     }
 
     if (query.fabric && query.fabric !== 'all') {
-      filter.fabric = { $regex: new RegExp(query.fabric, 'i') };
+      const sanitizedFabric = escapeRegex(query.fabric.trim());
+      filter.fabric = { $regex: new RegExp(sanitizedFabric, 'i') };
     }
 
     if (query.inStock === 'true' || query.inStock === true) {
@@ -439,7 +455,7 @@ export class ProductsService implements OnModuleInit {
     }
 
     if (query.search && query.search.trim()) {
-      const s = query.search.trim();
+      const s = escapeRegex(query.search.trim());
       filter.$or = [
         { name: { $regex: s, $options: 'i' } },
         { description: { $regex: s, $options: 'i' } },
@@ -476,13 +492,16 @@ export class ProductsService implements OnModuleInit {
       this.productModel.countDocuments(filter).exec(),
     ]);
 
-    return {
+    const result = {
       items,
       total,
       page,
       limit,
       pages: Math.ceil(total / limit) || 1,
     };
+
+    this.cacheService.set(cacheKey, result, 45); // 45 seconds TTL
+    return result;
   }
 
   async findOne(idOrSlug: string): Promise<Product> {
@@ -659,7 +678,9 @@ export class ProductsService implements OnModuleInit {
       coverImage: finalCover,
     });
 
-    return created.save();
+    const saved = await created.save();
+    this.cacheService.del('products*');
+    return saved;
   }
 
   async update(
@@ -691,6 +712,7 @@ export class ProductsService implements OnModuleInit {
       throw new NotFoundException(`Product "${id}" not found`);
     }
 
+    this.cacheService.del('products*');
     return updated;
   }
 
@@ -713,6 +735,7 @@ export class ProductsService implements OnModuleInit {
       throw new NotFoundException(`Product "${id}" not found`);
     }
 
+    this.cacheService.del('products*');
     return { success: true, id };
   }
 }

@@ -18,6 +18,7 @@ import { InventoryModule } from './inventory/inventory.module';
 import { InquiriesModule } from './inquiries/inquiries.module';
 import { HeroBannersModule } from './hero-banners/hero-banners.module';
 import { ContentModule } from './content/content.module';
+import { CacheModule } from './common/cache/cache.module';
 
 @Module({
   imports: [
@@ -26,6 +27,9 @@ import { ContentModule } from './content/content.module';
       isGlobal: true,
       envFilePath: '.env',
     }),
+
+    // Global in-memory catalog cache service
+    CacheModule,
 
     // MongoDB connection via Mongoose
     MongooseModule.forRootAsync({

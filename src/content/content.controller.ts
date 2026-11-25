@@ -8,6 +8,7 @@ import {
   Post,
   Put,
   Query,
+  UseGuards,
 } from '@nestjs/common';
 import { ContentService } from './content.service';
 import {
@@ -17,13 +18,20 @@ import {
 } from './dto/editorial-banner.dto';
 import { CreateOurStoryDto, UpdateOurStoryDto } from './dto/our-story.dto';
 import { ResponseMessage } from '../common/decorators/response-message.decorator';
+import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
+import { RolesGuard } from '../common/guards/roles.guard';
+import { Roles } from '../common/decorators/roles.decorator';
+import { Public } from '../common/decorators/public.decorator';
 
 @Controller('content')
+@UseGuards(JwtAuthGuard, RolesGuard)
+@Roles('admin')
 export class ContentController {
   constructor(private readonly contentService: ContentService) {}
 
   // ==================== EDITORIAL BANNERS ====================
 
+  @Public()
   @Get('editorial-banners')
   @ResponseMessage('Editorial banners retrieved successfully')
   async findAllEditorialBanners(@Query('status') status?: string) {
@@ -36,6 +44,7 @@ export class ContentController {
     return this.contentService.reorderEditorialBanners(dto.orderedIds);
   }
 
+  @Public()
   @Get('editorial-banners/:id')
   @ResponseMessage('Editorial banner retrieved successfully')
   async findOneEditorialBanner(@Param('id') id: string) {
@@ -65,6 +74,7 @@ export class ContentController {
 
   // ==================== OUR STORY ====================
 
+  @Public()
   @Get('our-story')
   @ResponseMessage('Our Story entries retrieved successfully')
   async findAllOurStories(@Query('status') status?: string) {
@@ -77,6 +87,7 @@ export class ContentController {
     return this.contentService.reorderOurStories(dto.orderedIds);
   }
 
+  @Public()
   @Get('our-story/:id')
   @ResponseMessage('Our Story entry retrieved successfully')
   async findOneOurStory(@Param('id') id: string) {

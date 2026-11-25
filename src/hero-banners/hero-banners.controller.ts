@@ -8,6 +8,7 @@ import {
   Body,
   Param,
   Query,
+  UseGuards,
 } from '@nestjs/common';
 import { HeroBannersService } from './hero-banners.service';
 import { CreateHeroBannerDto } from './dto/create-hero-banner.dto';
@@ -19,18 +20,26 @@ import {
 } from './dto/hero-marquee.dto';
 import { UpdatePageHeroDto } from './dto/page-hero.dto';
 import { ResponseMessage } from '../common/decorators/response-message.decorator';
+import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
+import { RolesGuard } from '../common/guards/roles.guard';
+import { Roles } from '../common/decorators/roles.decorator';
+import { Public } from '../common/decorators/public.decorator';
 
 @Controller('hero-banners')
+@UseGuards(JwtAuthGuard, RolesGuard)
+@Roles('admin')
 export class HeroBannersController {
   constructor(private readonly heroBannersService: HeroBannersService) {}
 
   // Static / sub-resource routes declared BEFORE parameterized :id routes
+  @Public()
   @Get('pages')
   @ResponseMessage('Page hero banners retrieved successfully')
   async findAllPages() {
     return this.heroBannersService.findAllPages();
   }
 
+  @Public()
   @Get('pages/:pageKey')
   @ResponseMessage('Page hero banner retrieved successfully')
   async findPageByKey(@Param('pageKey') pageKey: string) {
@@ -46,6 +55,7 @@ export class HeroBannersController {
     return this.heroBannersService.updatePageByKey(pageKey, dto);
   }
 
+  @Public()
   @Get('marquee')
   @ResponseMessage('Hero marquee highlights retrieved successfully')
   async findAllMarquee(@Query('status') status?: string) {
@@ -80,12 +90,14 @@ export class HeroBannersController {
   }
 
   // Primary Hero Slides CRUD
+  @Public()
   @Get()
   @ResponseMessage('Hero banners retrieved successfully')
   async findAll(@Query('status') status?: string) {
     return this.heroBannersService.findAll(status);
   }
 
+  @Public()
   @Get(':id')
   @ResponseMessage('Hero banner retrieved successfully')
   async findOne(@Param('id') id: string) {
