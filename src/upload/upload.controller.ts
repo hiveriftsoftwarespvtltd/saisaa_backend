@@ -24,9 +24,14 @@ export const multerStorage = diskStorage({
     cb(null, uploadsDir);
   },
   filename: (_req, file, cb) => {
-    const uniqueSuffix = `${Date.now()}-${Math.round(Math.random() * 1e9)}`;
-    const ext = extname(file.originalname).toLowerCase();
-    cb(null, `${uniqueSuffix}${ext}`);
+    // If originalname is already a timestamped upload filename, preserve it
+    if (/^\d+-\d+\.(jpe?g|png|webp|gif|svg)$/i.test(file.originalname)) {
+      cb(null, file.originalname);
+    } else {
+      const uniqueSuffix = `${Date.now()}-${Math.round(Math.random() * 1e9)}`;
+      const ext = extname(file.originalname).toLowerCase();
+      cb(null, `${uniqueSuffix}${ext}`);
+    }
   },
 });
 
@@ -68,8 +73,10 @@ export class UploadController {
     }
 
     const host = req.get('host') || 'localhost:6001';
-    const protocol = req.protocol || 'http';
-    const url = `${protocol}://${host}/uploads/${file.filename}`;
+    const isLocal = host.includes('localhost') || host.includes('127.0.0.1');
+    const protocol = isLocal ? (req.protocol || 'http') : 'https';
+    const finalHost = isLocal ? host : 'api.saisaa.com';
+    const url = `${protocol}://${finalHost}/uploads/${file.filename}`;
 
     return {
       filename: file.filename,
@@ -101,7 +108,9 @@ export class UploadController {
     }
 
     const host = req.get('host') || 'localhost:6001';
-    const protocol = req.protocol || 'http';
+    const isLocal = host.includes('localhost') || host.includes('127.0.0.1');
+    const protocol = isLocal ? (req.protocol || 'http') : 'https';
+    const finalHost = isLocal ? host : 'api.saisaa.com';
 
     return files.map((file) => ({
       filename: file.filename,
@@ -109,7 +118,7 @@ export class UploadController {
       size: file.size,
       mimetype: file.mimetype,
       path: `/uploads/${file.filename}`,
-      url: `${protocol}://${host}/uploads/${file.filename}`,
+      url: `${protocol}://${finalHost}/uploads/${file.filename}`,
     }));
   }
 }
